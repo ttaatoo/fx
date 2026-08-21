@@ -108,6 +108,16 @@ jobs:
           pattern: fx-*
           merge-multiple: true
 
+      - name: Alias macOS arm64 tarball for the Homebrew formula
+        run: |
+          set -euo pipefail
+          # PGSO packages fx-macos-aarch64.tar.gz (upgrade/CDN platform id).
+          # Formula/fx.rb downloads fx-macos-arm64.tar.gz from the GitHub Release.
+          if [ -f fx-macos-aarch64.tar.gz ]; then
+            cp fx-macos-aarch64.tar.gz fx-macos-arm64.tar.gz
+            sha256sum fx-macos-arm64.tar.gz > fx-macos-arm64.tar.gz.sha256
+          fi
+
       - name: Create git tag
         env:
           RELEASE_TAG: ${{ needs.check-version.outputs.version }}

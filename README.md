@@ -21,21 +21,30 @@ It's open source (Apache-2.0), model-agnostic, and suitable for both local and c
 
 ## Install
 
-This fork is a same-repo Homebrew tap (the repo is `ttaatoo/fx`, not a separate `homebrew-fx`). It is not the upstream `fx.sh` installer and not Homebrew-core's `fx` JSON viewer.
+This repository is a same-repo Homebrew tap (`ttaatoo/fx`, not a separate `homebrew-fx`). Formula only. No cask.
 
 ```bash
 brew tap ttaatoo/fx https://github.com/ttaatoo/fx
-# until a GitHub Release exists:
+# until a v* GitHub Release exists:
 brew install --formula --HEAD ttaatoo/fx/fx
 ```
 
-`--HEAD` compiles from `main` with Homebrew's Zig 0.16. After a `v*` GitHub Release:
+After a `v*` GitHub Release:
 
 ```bash
 brew install ttaatoo/fx/fx
 ```
 
-That installs a prebuilt `fx` binary from this repo's GitHub Releases (macOS and Linux, Intel and ARM). Update a HEAD install with `brew upgrade --fetch-HEAD ttaatoo/fx/fx`.
+If this repo is already tapped:
+
+```bash
+git -C "$(brew --repo ttaatoo/fx)" pull
+brew install --formula --HEAD ttaatoo/fx/fx
+# or, after a v* release:
+# brew reinstall ttaatoo/fx/fx
+```
+
+`--HEAD` compiles from `main` with Homebrew's Zig 0.16. The stable formula downloads a prebuilt GitHub Release tarball (no bottles). This tap is `ttaatoo/fx` only. Homebrew-core `fx` is an unrelated JSON viewer.
 
 Or build from source with [Zig 0.16.0+](https://ziglang.org/download/):
 
