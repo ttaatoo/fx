@@ -21,7 +21,32 @@ It's open source (Apache-2.0), model-agnostic, and suitable for both local and c
 
 ## Install
 
-This fork does not use the Vercel `fx.sh` installer as the only path. Build from source with [Zig 0.16.0+](https://ziglang.org/download/):
+This repository is a same-repo Homebrew tap (`ttaatoo/fx`, not a separate `homebrew-fx`). Formula only. No cask.
+
+```bash
+brew tap ttaatoo/fx https://github.com/ttaatoo/fx
+# until a v* GitHub Release exists:
+brew install --formula --HEAD ttaatoo/fx/fx
+```
+
+After a `v*` GitHub Release:
+
+```bash
+brew install ttaatoo/fx/fx
+```
+
+If this repo is already tapped:
+
+```bash
+git -C "$(brew --repo ttaatoo/fx)" pull
+brew install --formula --HEAD ttaatoo/fx/fx
+# or, after a v* release:
+# brew reinstall ttaatoo/fx/fx
+```
+
+`--HEAD` compiles from `main` with Homebrew's Zig 0.16. The stable formula downloads a prebuilt GitHub Release tarball (no bottles). This tap is `ttaatoo/fx` only. Homebrew-core `fx` is an unrelated JSON viewer.
+
+Or build from source with [Zig 0.16.0+](https://ziglang.org/download/):
 
 ```bash
 git clone https://github.com/ttaatoo/fx.git
