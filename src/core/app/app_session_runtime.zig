@@ -40,6 +40,7 @@ const session_summary_codec = @import("../session/session_summary_codec.zig");
 const subagent_tool_host = @import("../subagent/tool_host.zig");
 const subagent_authority = @import("../subagent/authority.zig");
 const subagent_resume_admission = @import("../subagent/resume_admission.zig");
+const subagent_domain = @import("../subagent/domain.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
 const builtin_tools = @import("../../builtins/tools.zig");
 const types = @import("../shared/types.zig");
@@ -940,7 +941,12 @@ fn resumePageLimitForRows(rows: u16) usize {
     // Fill the resume screen: terminal rows minus the composer/divider/hint
     // chrome (4), the menu header (1), the top gap (1), and a trailing
     // "Load more" row (1). Floored so short terminals still page usefully.
-    return @max(@as(usize, rows -| 7), session_store.default_resume_page_limit);
+    // Clamp to the admission page ceiling so an unset or huge row count cannot
+    // produce InvalidSessionListLimit.
+    return @min(
+        subagent_domain.max_page_limit,
+        @max(@as(usize, rows -| 7), session_store.default_resume_page_limit),
+    );
 }
 
 fn tryListResumableIndexPageForScope(
@@ -5213,6 +5219,17 @@ const TestApp = struct {
         return .{
             .alloc = alloc,
             .workspace_root = try alloc.dupe(u8, workspace_root),
+            .shell = .{
+                .layout = .{
+                    .rows = 24,
+                    .cols = 80,
+                    .content_bottom = 21,
+                    .divider_top_row = 22,
+                    .input_row = 23,
+                    .divider_bottom_row = 24,
+                    .hint_row = 24,
+                },
+            },
         };
     }
 
@@ -9639,7 +9656,7 @@ fn waitForSessionPickerLoad(app: *TestApp) !void {
         if (!picker.isLoading() and !picker.loading_more) return;
         io_mod.sleep(std.time.ns_per_ms);
     }
-    return error.TestExpectedEqual;
+    try std.testing.expectEqual(.ready, app.session_persistence.session_picker.load_state);
 }
 
 fn waitForSessionPickerPrewarm(app: *TestApp) !void {
@@ -9650,7 +9667,8 @@ fn waitForSessionPickerPrewarm(app: *TestApp) !void {
         if (loader.task == null and loader.pending == null) return;
         io_mod.sleep(std.time.ns_per_ms);
     }
-    return error.TestExpectedEqual;
+    try std.testing.expect(app.session_persistence.session_picker_load.task == null);
+    try std.testing.expect(app.session_persistence.session_picker_load.pending == null);
 }
 
 test "new session releases the old writer and replaces the subagent host" {

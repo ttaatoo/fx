@@ -1047,6 +1047,9 @@ pub const FakeAgentRuntimeDeps = struct {
         if (self.last_validated_arguments) |value| self.alloc.free(value);
         self.last_validated_arguments = try self.alloc.dupe(u8, call.arguments_json);
         try self.record("validate:{s}", .{call.name});
+        if (std.mem.eql(u8, call.name, "vision")) {
+            return .{ .failure = try arena.dupe(u8, "Unsupported tool: vision") };
+        }
         if (self.validation_result_index < self.validation_results.len) {
             const result = self.validation_results[self.validation_result_index];
             self.validation_result_index += 1;
@@ -1069,6 +1072,9 @@ pub const FakeAgentRuntimeDeps = struct {
         const self: *FakeAgentRuntimeDeps = @ptrCast(@alignCast(raw));
         try self.availability_checked_names.append(self.alloc, try self.alloc.dupe(u8, call.name));
         try self.record("availability:{s}", .{call.name});
+        if (std.mem.eql(u8, call.name, "vision")) {
+            return try arena.dupe(u8, "Unsupported tool: vision");
+        }
         for (self.availability_failure_names) |name| {
             if (std.mem.eql(u8, name, call.name)) {
                 return try arena.dupe(u8, tool_dispatch.web_search_unavailable_message);

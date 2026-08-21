@@ -16,6 +16,7 @@ const runtime_deps = @import("../deps.zig");
 const runtime_tool_contracts = @import("../tool_contracts.zig");
 const context_limits = @import("../../../config/context_limits.zig");
 const vision_executor = @import("../vision_executor.zig");
+const vision_contracts = @import("../vision_contracts.zig");
 const diagnostics = @import("../../../workspace/diagnostics.zig");
 const lifecycle_hooks = @import("../../../hooks/hooks.zig");
 const tool_dispatch = @import("../../../tooling/tool_dispatch.zig");
@@ -1056,8 +1057,8 @@ test "processQueuedPrompt rejects native-route attachment ID Vision calls before
     try std.testing.expectEqual(@as(usize, 1), results.len);
     try std.testing.expectEqual(types.PersistedToolStatus.failure, results[0].status);
     try std.testing.expectEqualStrings("vision", results[0].tool_name);
-    try std.testing.expect(std.mem.find(u8, results[0].output, "Unsupported tool: vision") != null);
-    try expectBodyContains(&gateway, 1, "Unsupported tool: vision");
+    try std.testing.expect(std.mem.find(u8, results[0].output, vision_contracts.native_route_unavailable_message) != null);
+    try expectBodyContains(&gateway, 1, vision_contracts.native_route_unavailable_message);
     try std.testing.expectEqualStrings("Recovered after unavailable Vision", hooks.finish_assistant_text.?);
 }
 

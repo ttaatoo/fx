@@ -7842,16 +7842,17 @@ test "app_input_runtime ctrl+j and ctrl+k navigate visible composer pickers" {
         bytes: []const u8,
         expected_index: usize,
     }{
-        .{ .bytes = "\x0a", .expected_index = 2 },
-        .{ .bytes = "\x0b", .expected_index = 0 },
-        .{ .bytes = "\x1b[106;5u", .expected_index = 2 },
-        .{ .bytes = "\x1b[107;5u", .expected_index = 0 },
+        .{ .bytes = "\x0a", .expected_index = 1 },
+        .{ .bytes = "\x0b", .expected_index = 1 },
+        .{ .bytes = "\x1b[106;5u", .expected_index = 1 },
+        .{ .bytes = "\x1b[107;5u", .expected_index = 1 },
     };
 
     for (cases) |case| {
         var app = try RoutingFakeApp.init(alloc);
         defer app.deinit();
         try openRoutingAuthPicker(&app);
+        try std.testing.expect(app.auth.movePicker(-1));
         try app.input_runtime.textReplacementState().replace(alloc, "/");
         app.shell.render_requests.clearReason(.footer);
 

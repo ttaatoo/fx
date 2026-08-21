@@ -68,6 +68,7 @@ const web_search_contract = @import("web_search_contract.zig");
 const web_fetch_artifacts = @import("../session/web_fetch_artifacts.zig");
 const types = @import("../shared/types.zig");
 const model_provider = @import("../config/model_provider.zig");
+const gateway_json = @import("../gateway/gateway_json.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const context_contract = @import("../workspace/context_contract.zig");
 const test_builtin_tools = if (builtin.is_test)
@@ -8348,18 +8349,38 @@ const VisionGatewayFixture = struct {
         self.payloads.deinit(self.alloc);
     }
 
-    fn unusedVisionBuild(
+    fn buildVisionPayload(
         _: ?*anyopaque,
         alloc: Allocator,
-        _: agent_stream_provider.BuildRequest,
+        request: agent_stream_provider.BuildRequest,
     ) anyerror![]u8 {
-        return alloc.dupe(u8, "{}");
+        const images = request.verified_images orelse return alloc.dupe(u8, "{}");
+        const response_format = request.response_format orelse
+            return error.MissingStructuredResponseFormat;
+        const budget: gateway_json.BuildBudget = if (request.budget) |value|
+            .{ .deadline = value.deadline, .cancel_flag = value.cancel_flag }
+        else
+            .{};
+        return gateway_json.buildGatewayRequestBodyWithVerifiedImagesAndBudget(
+            alloc,
+            request.serialized_tools,
+            request.messages,
+            images,
+            request.provider_options,
+            request.tool_choice,
+            .{
+                .name = response_format.name,
+                .description = response_format.description,
+                .schema_json = response_format.schema_json,
+            },
+            budget,
+        );
     }
 
     fn provider(self: *VisionGatewayFixture) agent_stream_provider.Provider {
         return .{
             .context = self,
-            .build_fn = unusedVisionBuild,
+            .build_fn = buildVisionPayload,
             .stream_fn = stream,
         };
     }
