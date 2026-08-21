@@ -1,8 +1,19 @@
 # fx
 
-## 0.0.4
+## 0.0.5
 
 <!-- release:start -->
+### New Features
+
+- **Direct providers:** Sign in with SuperGrok OAuth (`fx login grok`), Anthropic Messages, or Codex. This fork has no Vercel AI Gateway path
+- **Homebrew tap:** Install this fork from the same-repo tap `ttaatoo/fx` with `brew install --formula --HEAD ttaatoo/fx/fx` until a GitHub Release exists, then `brew install ttaatoo/fx/fx`
+
+### Improvements
+
+- **GitHub Releases:** Pushes to `main` publish tagged GitHub Release binaries when the version in source has no release yet
+<!-- release:end -->
+
+## 0.0.4
 
 ### New Features
 
@@ -29,8 +40,6 @@
 - **Process cleanup:** Cancel and reap headless terminal commands on SIGTERM, preserve signal status, and tolerate short-lived Linux processes disappearing during cleanup
 - **Model output limits:** Omit invalid limits that consume a model's full context window
 - **Terminal lease transitions:** Reject write payloads on lease acquisition, release, and revocation before session state changes
-
-<!-- release:end -->
 
 ## 0.0.3
 

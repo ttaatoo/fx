@@ -3,10 +3,10 @@
 class Fx < Formula
   desc "Unix-like coding agent CLI"
   homepage "https://github.com/ttaatoo/fx"
-  version "0.0.4"
+  version "0.0.5"
   license "Apache-2.0"
-  # GitHub Release tarballs (not bottles, not the Vercel blob CDN). Until a
-  # v0.0.4 release exists, install from git:
+  # GitHub Release tarballs (not bottles, not a Vercel blob CDN). Until a
+  # v0.0.5 release exists, install from git:
   #   brew install --formula --HEAD ttaatoo/fx/fx
   # Keep version + sha256 :no_check after rebuilding the same tag. Pin
   # sha256 only when bumping version.

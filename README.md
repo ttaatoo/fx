@@ -44,7 +44,7 @@ brew install --formula --HEAD ttaatoo/fx/fx
 # brew reinstall ttaatoo/fx/fx
 ```
 
-`--HEAD` compiles from `main` with Homebrew's Zig 0.16. The stable formula downloads a prebuilt GitHub Release tarball (no bottles). This tap is `ttaatoo/fx` only. Homebrew-core `fx` is an unrelated JSON viewer.
+`--HEAD` compiles from `main` with Homebrew's Zig 0.16. The stable formula downloads a prebuilt GitHub Release tarball (no bottles). Pushes to `main` create a tagged GitHub Release when the version in source has no tag or GitHub Release yet; `brew install ttaatoo/fx/fx` uses those assets. This tap is `ttaatoo/fx` only. Homebrew-core `fx` is an unrelated JSON viewer.
 
 Or build from source with [Zig 0.16.0+](https://ziglang.org/download/):
 
