@@ -279,6 +279,10 @@ fn runAskChild(
                 .agent_stream_provider = ctx.cfg.codex_agent_stream orelse agent_stream_provider.unavailable_provider,
                 .permission_reviewer_provider = ctx.cfg.codex_permission_reviewer_provider,
             },
+            .direct = .{
+                .agent_stream_provider = @import("../../gateway/direct_provider.zig").agent_stream_provider,
+                .permission_reviewer_provider = null,
+            },
         },
         .system_prompt = ctx.cfg.prompt_policy.system_prompt,
         .model_prompt_overlay = ctx.cfg.prompt_policy.modelPromptOverlay(admission.model),
@@ -1057,6 +1061,7 @@ const AskContext = struct {
         const provider = switch (self.provider) {
             .gateway => self.cfg.permission_reviewer_provider,
             .codex => self.cfg.codex_permission_reviewer_provider,
+            .anthropic, .xai => null,
         } orelse
             return permission_auto_classifier.Classifier.disabled();
         return permission_auto_classifier.Classifier.withProvider(provider, .{
@@ -1073,6 +1078,7 @@ const AskContext = struct {
         return switch (self.provider) {
             .gateway => self.cfg.gateway_provider.agent_stream,
             .codex => self.cfg.codex_agent_stream orelse agent_stream_provider.unavailable_provider,
+            .anthropic, .xai => @import("../../gateway/direct_provider.zig").agent_stream_provider,
         };
     }
 
@@ -1379,10 +1385,7 @@ fn missingCredentialResult(
     options: RunOptions,
     provider: model_provider.ProviderId,
 ) !PromptRunResult {
-    const message = if (provider == .codex)
-        credentials.missing_chatgpt_credential_message
-    else
-        credentials.missing_credential_message;
+    const message = credentials.missingCredentialMessage(provider, .cli);
     try options.deps.write_stderr(options.deps.stderr_ctx, "fx ask: ");
     try options.deps.write_stderr(options.deps.stderr_ctx, message);
     try options.deps.write_stderr(options.deps.stderr_ctx, "\n");

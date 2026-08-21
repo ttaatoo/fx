@@ -781,6 +781,83 @@ describe("cli: status", () => {
   );
 
   test(
+    "fx status and models use configured Anthropic and xAI providers",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "fx-e2e-direct-providers-"));
+      try {
+        const home = join(root, "home");
+        const workspace = join(root, "workspace");
+        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(workspace);
+        writeFileSync(
+          join(home, ".fx", "providers.json"),
+          JSON.stringify({
+            providers: {
+              anthropic: {
+                api: "anthropic-messages",
+                baseUrl: "https://api.anthropic.com",
+                apiKey: "$ANTHROPIC_API_KEY",
+                models: [{ id: "claude-opus-4-6" }, { id: "claude-sonnet-4-6" }],
+              },
+              xai: {
+                api: "openai-completions",
+                baseUrl: "https://api.x.ai/v1",
+                apiKey: "$XAI_API_KEY",
+                models: [{ id: "grok-4.6" }, { id: "grok-code-fast-1" }],
+              },
+            },
+          }) + "\n",
+          { mode: 0o600 },
+        );
+
+        const env = {
+          ...NO_GATEWAY_AUTH,
+          HOME: realpathSync(home),
+          ANTHROPIC_API_KEY: "sk-ant-e2e-test",
+          XAI_API_KEY: "xai-e2e-test",
+          FX_MODEL: "claude-opus-4-6",
+        };
+        const cwd = realpathSync(workspace);
+
+        const status = await runFx(["status", "--json"], { cwd, env });
+        expect(status.code).toBe(0);
+        const statusJson = JSON.parse(status.stdout.trim());
+        expect(statusJson.kind).toBe("status");
+        expect(statusJson.model).toBe("claude-opus-4-6");
+        expect(statusJson.model_source).toBe("Anthropic Messages");
+        expect(statusJson.auth).toBe("direct provider API key");
+
+        const models = await runFx(["models", "--json"], { cwd, env });
+        expect(models.code).toBe(0);
+        const modelsJson = JSON.parse(models.stdout.trim());
+        expect(modelsJson.kind).toBe("models");
+        expect(modelsJson.ids).toEqual([
+          "claude-opus-4-6",
+          "claude-sonnet-4-6",
+          "grok-4.6",
+          "grok-code-fast-1",
+        ]);
+
+        const provider = await runFx(["provider", "xai"], { cwd, env });
+        expect(provider.code).toBe(0);
+        expect(provider.stdout).toContain("Provider set to xAI");
+
+        const xaiStatus = await runFx(["status", "--json"], {
+          cwd,
+          env: { ...env, FX_MODEL: undefined },
+        });
+        expect(xaiStatus.code).toBe(0);
+        const xaiJson = JSON.parse(xaiStatus.stdout.trim());
+        expect(xaiJson.model).toBe("grok-4.6");
+        expect(xaiJson.model_source).toBe("xAI");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
     "fx status --json defaults permission mode to auto",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-permission-default-"));

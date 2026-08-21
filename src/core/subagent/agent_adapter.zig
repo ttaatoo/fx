@@ -39,11 +39,13 @@ pub const ProviderRoute = struct {
 pub const ProviderRoutes = struct {
     gateway: ProviderRoute,
     codex: ProviderRoute,
+    direct: ProviderRoute,
 
     pub fn select(self: ProviderRoutes, provider: model_provider.ProviderId) ProviderRoute {
         return switch (provider) {
             .gateway => self.gateway,
             .codex => self.codex,
+            .anthropic, .xai => self.direct,
         };
     }
 };
@@ -70,12 +72,15 @@ test "provider routes select independent streams and reviewers" {
     const routes = ProviderRoutes{
         .gateway = .{ .agent_stream_provider = gateway_stream, .permission_reviewer_provider = gateway_reviewer },
         .codex = .{ .agent_stream_provider = codex_stream, .permission_reviewer_provider = codex_reviewer },
+        .direct = .{ .agent_stream_provider = gateway_stream, .permission_reviewer_provider = null },
     };
 
     try std.testing.expect(routes.select(.gateway).agent_stream_provider.context.? == @as(*anyopaque, @ptrCast(&gateway_tag)));
     try std.testing.expect(routes.select(.gateway).permission_reviewer_provider.?.context.? == @as(*anyopaque, @ptrCast(&gateway_tag)));
     try std.testing.expect(routes.select(.codex).agent_stream_provider.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
     try std.testing.expect(routes.select(.codex).permission_reviewer_provider.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
+    try std.testing.expect(routes.select(.anthropic).permission_reviewer_provider == null);
+    try std.testing.expect(routes.select(.xai).permission_reviewer_provider == null);
 }
 
 pub const Config = struct {

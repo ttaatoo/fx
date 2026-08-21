@@ -13,6 +13,8 @@ const collections = @import("../shared/collections.zig");
 const config_runtime = @import("../config/config_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
 const model_provider = @import("../config/model_provider.zig");
+const direct_providers = @import("../config/direct_providers.zig");
+const direct_provider = @import("../../gateway/direct_provider.zig");
 const devbox_executor = @import("../execution/devbox_executor.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const doctor_runtime = @import("doctor_runtime.zig");
@@ -226,6 +228,25 @@ fn selectCatalogModel(
         }
     }
     return if (entries.len > 0) entries[0].id else null;
+}
+
+fn selectProviderCatalogModel(
+    alloc: Allocator,
+    target: model_provider.ProviderId,
+    entries: []const model_catalog.ModelCatalogEntry,
+    saved: ?[]const u8,
+) !?[]const u8 {
+    if (model_provider.isDirect(target)) {
+        var catalog = try direct_providers.loadFromHome(alloc);
+        defer catalog.deinit();
+        if (catalog.preferredModel(target, saved)) |preferred| {
+            for (entries) |entry| {
+                if (std.mem.eql(u8, entry.id, preferred)) return entry.id;
+            }
+        }
+        return null;
+    }
+    return selectCatalogModel(entries, saved);
 }
 
 const UpgradeOptions = struct {
@@ -861,11 +882,11 @@ fn runNonInteractiveWithDeps(
         },
         .provider => |rest| {
             if (rest.len != 1) {
-                try writeStderr(deps, "usage: fx provider <gateway|codex>\n");
+                try writeStderr(deps, "usage: fx provider <gateway|codex|anthropic|xai>\n");
                 return .handled_failure;
             }
             const target = model_provider.parse(rest[0]) orelse {
-                try writeStderr(deps, "fx provider: expected gateway or codex\n");
+                try writeStderr(deps, "fx provider: expected gateway, codex, anthropic, or xai\n");
                 return .handled_failure;
             };
             const workspace_root = try io_mod.realpathAlloc(alloc, ".");
@@ -877,7 +898,12 @@ fn runNonInteractiveWithDeps(
             };
             defer settings.deinit(alloc);
             if ((settings.provider orelse .gateway) == target) {
-                try writeStdout(deps, if (target == .codex) "Codex is already selected.\n" else "Gateway is already selected.\n");
+                try writeStdout(deps, switch (target) {
+                    .codex => "Codex is already selected.\n",
+                    .anthropic => "Anthropic is already selected.\n",
+                    .xai => "xAI is already selected.\n",
+                    .gateway => "Gateway is already selected.\n",
+                });
                 return .handled_success;
             }
 
@@ -906,10 +932,9 @@ fn runNonInteractiveWithDeps(
                 );
             }
             const credential = if (resolution.credential) |*value| value else {
-                try writeStderr(deps, if (target == .codex)
-                    "fx provider: run fx login codex first\n"
-                else
-                    "fx provider: configure a Gateway credential first\n");
+                try writeStderr(deps, "fx provider: ");
+                try writeStderr(deps, credentials.missingCredentialMessage(target, .cli));
+                try writeStderr(deps, "\n");
                 return .handled_failure;
             };
             const catalog_provider = if (target == .codex)
@@ -917,6 +942,8 @@ fn runNonInteractiveWithDeps(
                     try writeStderr(deps, "fx provider: Codex model catalog is unavailable\n");
                     return .handled_failure;
                 }
+            else if (model_provider.isDirect(target))
+                direct_provider.model_catalog_provider
             else
                 cfg.gateway_provider.model_catalog;
             const fetch_result = model_catalog.fetchWithPublicFallback(catalog_provider, alloc, .{
@@ -940,7 +967,7 @@ fn runNonInteractiveWithDeps(
             };
             defer model_catalog.freeModelCatalog(alloc, &loaded.catalog);
             const saved_model = if (target == .codex) settings.codex_model else settings.model;
-            const selected_model = selectCatalogModel(loaded.catalog.items, saved_model) orelse {
+            const selected_model = (try selectProviderCatalogModel(alloc, target, loaded.catalog.items, saved_model)) orelse {
                 try writeStderr(deps, "fx provider: target model catalog is empty\n");
                 return .handled_failure;
             };
@@ -957,7 +984,12 @@ fn runNonInteractiveWithDeps(
                 },
                 .outcome => {},
             }
-            try writeStdout(deps, if (target == .codex) "Provider set to Codex.\n" else "Provider set to Gateway.\n");
+            try writeStdout(deps, switch (target) {
+                .codex => "Provider set to Codex.\n",
+                .anthropic => "Provider set to Anthropic.\n",
+                .xai => "Provider set to xAI.\n",
+                .gateway => "Provider set to Gateway.\n",
+            });
             return .handled_success;
         },
         .setup => |rest| {
@@ -1040,6 +1072,8 @@ fn runNonInteractiveWithDeps(
                     try writeStderr(deps, "fx models: Codex model catalog is unavailable\n");
                     return .handled_failure;
                 }
+            else if (model_provider.isDirect(startup.provider))
+                direct_provider.cli_model_catalog_provider
             else
                 cfg.gateway_provider.cli_model_catalog;
             const loaded = switch (catalog_provider.fetch(alloc, .{
@@ -1444,6 +1478,17 @@ fn runNonInteractiveWithDeps(
             );
             defer startup.deinit(alloc);
             try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+            if (model_provider.isDirect(startup.provider)) {
+                const message = "credits are a Vercel AI Gateway feature and are unavailable for direct providers";
+                if (opts.format == .json) {
+                    try writeJsonCommandFailureCode(alloc, deps, "credits", "Unavailable", message);
+                } else {
+                    try writeStderr(deps, "fx credits: ");
+                    try writeStderr(deps, message);
+                    try writeStderr(deps, "\n");
+                }
+                return .handled_failure;
+            }
 
             var snapshot = cfg.gateway_provider.credits.fetch(alloc, .{
                 .credential = startup.apiKey(),

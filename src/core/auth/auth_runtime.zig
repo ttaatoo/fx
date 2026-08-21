@@ -384,7 +384,7 @@ pub const PickerView = struct {
                 4
             else
                 5,
-            .provider => 2,
+            .provider => 4,
             .sign_in, .api_key => 0,
             .change_team => blk: {
                 var count: usize = 0;
@@ -431,6 +431,8 @@ pub const PickerView = struct {
             .provider => switch (index) {
                 0 => .{ .provider = .gateway },
                 1 => .{ .provider = .codex },
+                2 => .{ .provider = .anthropic },
+                3 => .{ .provider = .xai },
                 else => null,
             },
             .sign_in, .api_key => null,
@@ -572,6 +574,12 @@ pub const StatusSnapshot = struct {
                 .interactive => credentials.missing_chatgpt_interactive_credential_message,
             };
         }
+        if (self.required_source == .custom_provider) {
+            return switch (surface) {
+                .cli => credentials.missing_direct_credential_message,
+                .interactive => credentials.missing_direct_interactive_credential_message,
+            };
+        }
         return switch (surface) {
             .cli => credentials.missing_credential_message,
             .interactive => credentials.missing_interactive_credential_message,
@@ -643,7 +651,9 @@ pub fn loadStatusSnapshotForProvider(
         },
     };
     const resolved_source = if (resolution.credential) |credential| credential.source else null;
-    var gateway_connected = resolved_source != null and resolved_source != .chatgpt_subscription;
+    var gateway_connected = resolved_source != null and
+        resolved_source != .chatgpt_subscription and
+        resolved_source != .custom_provider;
     const gateway_probe_required = provider == .codex or
         resolved_source == .chatgpt_subscription;
     if (gateway_probe_required) {
@@ -673,7 +683,12 @@ pub fn loadStatusSnapshotForProvider(
         };
     }
     return .{
-        .required_source = if (provider == .codex) .chatgpt_subscription else null,
+        .required_source = if (provider == .codex)
+            .chatgpt_subscription
+        else if (provider != null and model_provider.isDirect(provider.?))
+            .custom_provider
+        else
+            null,
         .stored_key_status = resolution.stored_key_status,
         .gateway_connected = gateway_connected,
         .chatgpt_connected = chatgpt_connected,
@@ -1346,7 +1361,9 @@ pub const Runtime = struct {
                     self,
                     loadRuntimeCredentialSource,
                 ),
-            .gateway => if (self.credentialSource() != .chatgpt_subscription)
+            .anthropic, .xai => self.selectDirectProvider(alloc, provider),
+            .gateway => if (self.credentialSource() != .chatgpt_subscription and
+                self.credentialSource() != .custom_provider)
                 false
             else
                 @as(?bool, try self.reselectByPrecedenceWithDeps(
@@ -1356,6 +1373,21 @@ pub const Runtime = struct {
                     loadRuntimeCredentialSource,
                 )),
         };
+    }
+
+    pub fn selectDirectProvider(self: *Self, alloc: Allocator, provider: model_provider.ProviderId) !?bool {
+        if (!model_provider.isDirect(provider)) return error.InvalidProvider;
+        const resolution = try credentials.resolveForProvider(
+            alloc,
+            self.oauth_transport,
+            self.secret_store,
+            .refresh_if_needed,
+            provider,
+            null,
+        );
+        var next = resolution.credential orelse return null;
+        defer next.deinit(alloc);
+        return self.adoptCredential(alloc, &next);
     }
 
     pub fn refreshFxLoginIfNeeded(self: *Self, alloc: Allocator) !bool {

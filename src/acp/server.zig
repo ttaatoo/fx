@@ -17,6 +17,7 @@ const credentials = @import("../core/auth/credentials.zig");
 const secret = @import("../core/auth/secret.zig");
 const auth_runtime = @import("../core/auth/auth_runtime.zig");
 const model_provider = @import("../core/config/model_provider.zig");
+const direct_providers = @import("../core/config/direct_providers.zig");
 const debug_trace = @import("../core/shared/debug_trace.zig");
 const gateway_provider = @import("../core/gateway/gateway_provider.zig");
 const model_catalog = @import("../core/gateway/model_catalog.zig");
@@ -373,6 +374,7 @@ pub fn streamProviderFor(
         .gateway => state.cfg.gateway_provider.agent_stream,
         .codex => state.cfg.codex_agent_stream orelse
             @import("../core/agent/stream_provider.zig").unavailable_provider,
+        .anthropic, .xai => @import("../gateway/direct_provider.zig").agent_stream_provider,
     };
 }
 
@@ -383,6 +385,7 @@ pub fn catalogProviderFor(
     return switch (provider) {
         .gateway => state.cfg.gateway_provider.model_catalog,
         .codex => state.cfg.codex_model_catalog,
+        .anthropic, .xai => @import("../gateway/direct_provider.zig").model_catalog_provider,
     };
 }
 
@@ -1355,6 +1358,15 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
     }
     state.provider = startup.provider;
     state.configured_model = try alloc.dupe(u8, startup.configured_model);
+    if (state.cfg.model_override) |override| {
+        var catalog = try direct_providers.loadFromHome(alloc);
+        defer catalog.deinit();
+        if (catalog.findModel(override)) |hit| {
+            state.provider = hit.provider.provider;
+            alloc.free(state.selected_model);
+            state.selected_model = try alloc.dupe(u8, hit.model_id);
+        }
+    }
 
     var startup_credential = startup.takeCredential();
     defer if (startup_credential) |*credential| credential.deinit(alloc);
@@ -1386,10 +1398,7 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
         if (routed_credential == null) {
             return state.writer.writeError(alloc, msg.id, .{
                 .code = ErrorCode.invalid_request,
-                .message = if (state.provider == .codex)
-                    credentials.missing_chatgpt_credential_message
-                else
-                    credentials.missing_credential_message,
+                .message = credentials.missingCredentialMessage(state.provider, .cli),
             });
         }
         break :routed &routed_credential.?;
@@ -1397,10 +1406,7 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
     if (credential.token.len == 0) {
         return state.writer.writeError(alloc, msg.id, .{
             .code = ErrorCode.invalid_request,
-            .message = if (state.provider == .codex)
-                credentials.missing_chatgpt_credential_message
-            else
-                credentials.missing_credential_message,
+            .message = credentials.missingCredentialMessage(state.provider, .cli),
         });
     }
     adoptServerCredential(state, credential);
@@ -1653,10 +1659,7 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
                 break :credential resolution.credential orelse
                     return state.writer.writeError(alloc, msg.id, .{
                         .code = ErrorCode.invalid_request,
-                        .message = if (target == .codex)
-                            credentials.missing_chatgpt_credential_message
-                        else
-                            credentials.missing_credential_message,
+                        .message = credentials.missingCredentialMessage(target, .cli),
                     });
             };
             defer staged_credential.deinit(alloc);
@@ -1701,10 +1704,7 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
             else
                 try config_runtime.loadMergedSettings(alloc, state.workspace_root);
             defer settings.deinit(alloc);
-            const saved_model = switch (target) {
-                .gateway => settings.model,
-                .codex => settings.codex_model,
-            };
+            const saved_model = if (target == .codex) settings.codex_model else settings.model;
             var selected_model = catalog.items[0].id;
             if (saved_model) |saved| {
                 for (catalog.items) |entry| {

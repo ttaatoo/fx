@@ -1610,6 +1610,13 @@ const App = struct {
                 else
                     null,
             },
+            .direct = .{
+                .agent_stream_provider = if (comptime host_target.is_wasm)
+                    agent_stream_provider.unavailable_provider
+                else
+                    builtin_providers.agentStream(.anthropic),
+                .permission_reviewer_provider = null,
+            },
         };
     }
 
@@ -3784,6 +3791,10 @@ test "semantic code block preserves indentation on wrapped continuation rows" {
 test {
     _ = @import("napi_fetch_state.zig");
     _ = @import("core/config/model_provider.zig");
+    _ = @import("core/config/direct_providers.zig");
+    _ = @import("gateway/direct_provider.zig");
+    _ = @import("gateway/anthropic_messages.zig");
+    _ = @import("gateway/openai_completions.zig");
     _ = provider_runtime;
     _ = @import("acp/prompt.zig");
     _ = @import("core/output/activity_status.zig");

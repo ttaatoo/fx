@@ -11,6 +11,7 @@ const login_flow = @import("../auth/login_flow.zig");
 const chatgpt_oauth = @import("../auth/chatgpt_oauth.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
 const model_provider = @import("../config/model_provider.zig");
+const direct_providers = @import("../config/direct_providers.zig");
 const model_catalog = @import("../gateway/model_catalog.zig");
 const provider_runtime = @import("provider_runtime.zig");
 const types = @import("../shared/types.zig");
@@ -46,6 +47,8 @@ pub fn Runtime(comptime App: type) type {
                 const provider = provider_runtime.provider(app);
                 const required_source: credentials.Source = if (provider == .codex)
                     .chatgpt_subscription
+                else if (model_provider.isDirect(provider))
+                    .custom_provider
                 else
                     app.auth.credentialSource() orelse .fx_login;
                 const route_change = app.auth.selectForProvider(app.alloc, provider) catch |err| switch (err) {
@@ -64,9 +67,30 @@ pub fn Runtime(comptime App: type) type {
                     }, true);
                     app.shell.render_requests.request(.footer);
                     return false;
+                } else if (model_provider.isDirect(provider) and
+                    app.auth.credentialSource() != .custom_provider)
+                {
+                    try app.writeDomainNotice(.{
+                        .topic = "auth",
+                        .tone = .warning,
+                        .body = credentials.missing_direct_interactive_credential_message,
+                    }, true);
+                    app.shell.render_requests.request(.footer);
+                    return false;
                 }
             }
             if (app.auth.credentialSource() != null) return true;
+            if (comptime provider_runtime.supported(App)) {
+                if (model_provider.isDirect(provider_runtime.provider(app))) {
+                    try app.writeDomainNotice(.{
+                        .topic = "auth",
+                        .tone = .@"error",
+                        .body = credentials.missing_direct_interactive_credential_message,
+                    }, true);
+                    app.shell.render_requests.request(.footer);
+                    return false;
+                }
+            }
 
             const auth_view = app.auth.view();
             if (auth_view.onboarding_skipped) {
@@ -120,7 +144,7 @@ pub fn Runtime(comptime App: type) type {
                 try app.writeDomainNotice(.{
                     .topic = "provider",
                     .tone = .warning,
-                    .body = "Usage: /provider [gateway|codex]",
+                    .body = "Usage: /provider [gateway|codex|anthropic|xai]",
                 }, true);
                 return;
             };
@@ -673,10 +697,7 @@ pub fn Runtime(comptime App: type) type {
                 try app.writeDomainNotice(.{
                     .topic = "provider",
                     .tone = .warning,
-                    .body = if (target == .codex)
-                        "Run fx login codex, then try switching again."
-                    else
-                        credentials.missing_interactive_credential_message,
+                    .body = credentials.missingCredentialMessage(target, .interactive),
                 }, true);
                 return;
             };
@@ -736,17 +757,28 @@ pub fn Runtime(comptime App: type) type {
                 return;
             };
             defer settings.deinit(app.alloc);
-            const saved_model = switch (target) {
-                .gateway => settings.model,
-                .codex => settings.codex_model,
-            };
+            const saved_model = if (target == .codex) settings.codex_model else settings.model;
             const requested_model = io_mod.getenv("FX_MODEL") orelse saved_model;
             var selected: ?[]const u8 = null;
-            if (requested_model) |candidate| {
-                for (catalog.items) |entry| {
-                    if (std.mem.eql(u8, candidate, entry.id)) {
-                        selected = entry.id;
-                        break;
+            if (model_provider.isDirect(target)) {
+                var home_catalog = try direct_providers.loadFromHome(app.alloc);
+                defer home_catalog.deinit();
+                if (home_catalog.preferredModel(target, requested_model)) |preferred| {
+                    for (catalog.items) |entry| {
+                        if (std.mem.eql(u8, entry.id, preferred)) {
+                            selected = entry.id;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (selected == null) {
+                if (requested_model) |candidate| {
+                    for (catalog.items) |entry| {
+                        if (std.mem.eql(u8, candidate, entry.id)) {
+                            selected = entry.id;
+                            break;
+                        }
                     }
                 }
             }
@@ -789,10 +821,10 @@ pub fn Runtime(comptime App: type) type {
                     try app.writeDomainNotice(.{ .topic = "provider", .tone = .neutral, .body = body }, true);
                 }
             } else {
-                var persistence = config_runtime.attemptUserPreferences(app.alloc, switch (target) {
-                    .gateway => .{ .provider = .gateway, .model = provider_runtime.model(app) },
-                    .codex => .{ .provider = .codex, .codex_model = provider_runtime.model(app) },
-                });
+                var persistence = config_runtime.attemptUserPreferences(app.alloc, if (target == .codex)
+                    .{ .provider = .codex, .codex_model = provider_runtime.model(app) }
+                else
+                    .{ .provider = target, .model = provider_runtime.model(app) });
                 defer persistence.deinit(app.alloc);
                 switch (persistence) {
                     .outcome => try app.writeDomainNotice(.{ .topic = "provider", .tone = .neutral, .body = body }, true),
