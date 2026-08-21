@@ -1717,7 +1717,7 @@ test "surface footer measurement reserves only the compact auth picker rows" {
     );
 }
 
-test "surface footer places the cursor after the Vercel team query" {
+test "surface footer places the cursor after the team query" {
     const auth_runtime = @import("../../core/auth/auth_runtime.zig");
     const login_flow = @import("../../core/auth/login_flow.zig");
     const alloc = std.testing.allocator;
@@ -1763,11 +1763,11 @@ test "surface footer places the cursor after the Vercel team query" {
     defer frame.deinit(alloc);
 
     try std.testing.expectEqual(frame.paint.footer.picker_start, frame.composed.cursor.row);
-    try std.testing.expectEqual(@as(u16, 39), frame.composed.cursor.col);
+    try std.testing.expectEqual(@as(u16, 32), frame.composed.cursor.col);
     try std.testing.expect(frame.composed.cursor_visible);
 }
 
-test "surface footer keeps the Vercel team query and cursor visible at minimum height" {
+test "surface footer keeps the team query and cursor visible at minimum height" {
     const auth_runtime = @import("../../core/auth/auth_runtime.zig");
     const alloc = std.testing.allocator;
     var approval = ApprovalPrompt{};
@@ -1823,7 +1823,7 @@ test "surface footer keeps the Vercel team query and cursor visible at minimum h
     }
     try std.testing.expect(query_visible);
     try std.testing.expectEqual(frame.paint.footer.picker_start, frame.composed.cursor.row);
-    try std.testing.expectEqual(@as(u16, 39), frame.composed.cursor.col);
+    try std.testing.expectEqual(@as(u16, 32), frame.composed.cursor.col);
     try std.testing.expect(frame.composed.cursor_visible);
 }
 

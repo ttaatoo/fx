@@ -340,10 +340,10 @@ fn loadedCatalogStatusText(state: model_cache_runtime.ModelMenuCatalogState) ?[]
         const reason = state.public_only_reason orelse return "Using the public model catalog.";
         return switch (reason) {
             .no_credential => "No SuperGrok or Anthropic credential is configured. Run fx login grok, or set ANTHROPIC_API_KEY.",
-            .fx_login_team_required => "Vercel teams are not used on this fork. Run fx login grok.",
-            .fx_login_refresh_required => "Vercel sign-in is not used on this fork. Run fx login grok.",
-            .credential_refresh_failed => "A retired Gateway credential was ignored. Run fx login grok.",
-            .authenticated_credential_rejected => "A retired Gateway credential was ignored. Run fx login grok.",
+            .fx_login_team_required => "A retired login session is ignored. Run fx login grok.",
+            .fx_login_refresh_required => "A retired login session is ignored. Run fx login grok.",
+            .credential_refresh_failed => "A retired login credential was ignored. Run fx login grok.",
+            .authenticated_credential_rejected => "A retired login credential was ignored. Run fx login grok.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
             .grok_subscription => "SuperGrok models require an authenticated SuperGrok session.",
         };
@@ -351,7 +351,7 @@ fn loadedCatalogStatusText(state: model_cache_runtime.ModelMenuCatalogState) ?[]
     if (state.access_level == .authenticated) {
         const source = state.source orelse return "Using configured SuperGrok or Anthropic models.";
         return switch (source) {
-            .fx_login, .ai_gateway_api_key, .vercel_oidc_token, .stored_key => "Gateway credentials are not used on this fork. Run fx login grok.",
+            .fx_login, .ai_gateway_api_key, .vercel_oidc_token, .stored_key => "This credential is not used on this fork. Run fx login grok.",
             .chatgpt_subscription => "Codex catalog: authenticated with a subscription.",
             .custom_provider => "Direct provider catalog: using ~/.fx/providers.json.",
             .grok_subscription => "SuperGrok catalog: authenticated with a subscription.",
@@ -521,7 +521,7 @@ test "model menu states and navigation budget stay bounded" {
 
 test "model menu status follows provenance and retryable failure precedence" {
     try std.testing.expectEqualStrings(
-        "Gateway credentials are not used on this fork. Run fx login grok.",
+        "This credential is not used on this fork. Run fx login grok.",
         loadedCatalogStatusText(.{ .access_level = .authenticated, .source = .fx_login }).?,
     );
 
@@ -530,10 +530,10 @@ test "model menu status follows provenance and retryable failure precedence" {
         expected: []const u8,
     }{
         .{ .state = .{ .public_only_reason = .no_credential, .private_models_hidden = true }, .expected = "No SuperGrok or Anthropic credential is configured. Run fx login grok, or set ANTHROPIC_API_KEY." },
-        .{ .state = .{ .public_only_reason = .fx_login_team_required, .private_models_hidden = true }, .expected = "Vercel teams are not used on this fork. Run fx login grok." },
-        .{ .state = .{ .public_only_reason = .fx_login_refresh_required, .private_models_hidden = true }, .expected = "Vercel sign-in is not used on this fork. Run fx login grok." },
-        .{ .state = .{ .public_only_reason = .credential_refresh_failed, .private_models_hidden = true }, .expected = "A retired Gateway credential was ignored. Run fx login grok." },
-        .{ .state = .{ .public_only_reason = .authenticated_credential_rejected, .private_models_hidden = true }, .expected = "A retired Gateway credential was ignored. Run fx login grok." },
+        .{ .state = .{ .public_only_reason = .fx_login_team_required, .private_models_hidden = true }, .expected = "A retired login session is ignored. Run fx login grok." },
+        .{ .state = .{ .public_only_reason = .fx_login_refresh_required, .private_models_hidden = true }, .expected = "A retired login session is ignored. Run fx login grok." },
+        .{ .state = .{ .public_only_reason = .credential_refresh_failed, .private_models_hidden = true }, .expected = "A retired login credential was ignored. Run fx login grok." },
+        .{ .state = .{ .public_only_reason = .authenticated_credential_rejected, .private_models_hidden = true }, .expected = "A retired login credential was ignored. Run fx login grok." },
         .{ .state = .{ .failure = .{ .category = .transport, .retryable = true } }, .expected = "Could not load the model catalog; retry /models." },
         .{ .state = .{ .access_level = .public_only, .public_only_reason = .no_credential, .private_models_hidden = true, .failure = .{ .category = .rate_limited, .retryable = true } }, .expected = "Model discovery was rate limited; retry /models." },
         .{ .state = .{ .access_level = .authenticated, .failure = .{ .category = .rate_limited, .retryable = true } }, .expected = "Model discovery was rate limited; retry /models." },

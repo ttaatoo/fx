@@ -13,7 +13,7 @@ const input_presentation = @import("input_presentation.zig");
 const row_text = @import("row_text.zig");
 
 const Allocator = std.mem.Allocator;
-const team_query_prefix = "   Choose a Vercel team · Search: ";
+const team_query_prefix = "   Choose a team · Search: ";
 const compact_team_query_prefix = "Search: ";
 
 const TeamQueryProjection = struct {
@@ -119,9 +119,9 @@ pub noinline fn composeAuthPickerRow(
             .sign_in => unreachable,
             .api_key => unreachable,
             .change_team => if (view.team_query.len == 0)
-                "     No Vercel teams available"
+                "     No teams available"
             else
-                "     No matching Vercel teams",
+                "     No matching teams",
             .switch_credential => "     No credentials available",
         }, width);
         try row.appendSlice(alloc, ui_render.reset_style);
@@ -1701,11 +1701,11 @@ test "auth picker renders the staged switch and disabled team screens" {
     };
     var team_header = try composeAuthPickerRow(alloc, team_view, 0, 2, 80);
     defer team_header.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, team_header.items, "Choose a Vercel team") != null);
+    try std.testing.expect(std.mem.find(u8, team_header.items, "Choose a team") != null);
 
     var no_teams = try composeAuthPickerRow(alloc, team_view, 1, 2, 80);
     defer no_teams.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, no_teams.items, "No Vercel teams available") != null);
+    try std.testing.expect(std.mem.find(u8, no_teams.items, "No teams available") != null);
 
     var search_view = team_view;
     search_view.team_query = "play";
@@ -1724,7 +1724,7 @@ test "auth picker renders the staged switch and disabled team screens" {
 
     var no_matches = try composeAuthPickerRow(alloc, search_view, 1, 2, 80);
     defer no_matches.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, no_matches.items, "No matching Vercel teams") != null);
+    try std.testing.expect(std.mem.find(u8, no_matches.items, "No matching teams") != null);
 }
 
 test "api key stage renders only a bounded mask and the configured backend label" {

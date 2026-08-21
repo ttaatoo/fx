@@ -5649,14 +5649,14 @@ test "long transcript picker filtering keeps footer anchored and close releases 
         .{
             .topic = "auth",
             .tone = .information,
-            .body = "Starting Vercel sign-in",
+            .body = "Starting SuperGrok sign-in",
         },
         true,
     );
     h.frame_redraw = true;
     try renderTestFooter(&h, &input, &approval, &h.frame_redraw);
     try h.flush();
-    try expectGridContains(&h, "Starting Vercel sign-in");
+    try expectGridContains(&h, "Starting SuperGrok sign-in");
 }
 
 test "picker growth advances history while shrink and dismissal do not" {

@@ -753,10 +753,10 @@ pub const ModelListSnapshot = struct {
         const reason = self.public_only_reason orelse return "Using the public model catalog.";
         return switch (reason) {
             .no_credential => "No SuperGrok or Anthropic credential is configured. Run fx login grok, or set ANTHROPIC_API_KEY.",
-            .fx_login_team_required => "Vercel teams are not used on this fork. Run fx login grok.",
-            .fx_login_refresh_required => "Vercel sign-in is not used on this fork. Run fx login grok.",
-            .credential_refresh_failed => "A retired Gateway credential was ignored. Run fx login grok.",
-            .authenticated_credential_rejected => "A retired Gateway credential was ignored. Run fx login grok.",
+            .fx_login_team_required => "A retired login session is ignored. Run fx login grok.",
+            .fx_login_refresh_required => "A retired login session is ignored. Run fx login grok.",
+            .credential_refresh_failed => "A retired login credential was ignored. Run fx login grok.",
+            .authenticated_credential_rejected => "A retired login credential was ignored. Run fx login grok.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
             .grok_subscription => "SuperGrok models require an authenticated SuperGrok session.",
         };
@@ -2155,8 +2155,8 @@ test "model list explains public-only and rejected-credential catalogs" {
         },
         .{
             .snapshot = rejected,
-            .text = "[models] 1 available\n - alpha · SuperGrok\n[models] A retired Gateway credential was ignored. Run fx login grok.\n",
-            .body = "1 available\n - alpha · SuperGrok\nA retired Gateway credential was ignored. Run fx login grok.",
+            .text = "[models] 1 available\n - alpha · SuperGrok\n[models] A retired login credential was ignored. Run fx login grok.\n",
+            .body = "1 available\n - alpha · SuperGrok\nA retired login credential was ignored. Run fx login grok.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .private_models_hidden = true, .public_only_reason = .no_credential },
@@ -2165,8 +2165,8 @@ test "model list explains public-only and rejected-credential catalogs" {
         },
         .{
             .snapshot = .{ .ids = &.{}, .private_models_hidden = true, .public_only_reason = .authenticated_credential_rejected },
-            .text = "[models] no models returned by SuperGrok\n[models] A retired Gateway credential was ignored. Run fx login grok.\n",
-            .body = "no models returned by SuperGrok\nA retired Gateway credential was ignored. Run fx login grok.",
+            .text = "[models] no models returned by SuperGrok\n[models] A retired login credential was ignored. Run fx login grok.\n",
+            .body = "no models returned by SuperGrok\nA retired login credential was ignored. Run fx login grok.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .provider = .codex },

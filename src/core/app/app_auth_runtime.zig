@@ -431,27 +431,12 @@ pub fn Runtime(comptime App: type) type {
                     var owned = completed;
                     defer owned.deinit(app.alloc);
                     switch (owned) {
-                        .vercel => |*selection| {
-                            if (!try selectCredentialSource(app, .fx_login)) {
-                                _ = app.auth.popPickerStage(app.alloc);
-                                try writeAuthNotice(app, .{
-                                    .topic = "auth",
-                                    .tone = .@"error",
-                                    .body = "Signed in, but the fx login credential could not be loaded.",
-                                });
-                                return;
-                            }
-                            rememberCredentialSource(app, .fx_login);
-
-                            if (selection.teams.items.len > 0) {
-                                app.auth.openTeamPicker(app.alloc, selection);
-                            } else {
-                                app.auth.closePicker(app.alloc);
-                            }
+                        .vercel => {
+                            app.auth.closePicker(app.alloc);
                             try writeAuthNotice(app, .{
                                 .topic = "auth",
-                                .tone = .neutral,
-                                .body = "Signed in to Vercel.",
+                                .tone = .warning,
+                                .body = "That sign-in path is not supported. Run /login and choose SuperGrok or Codex.",
                             });
                         },
                         .chatgpt => {
@@ -572,12 +557,12 @@ pub fn Runtime(comptime App: type) type {
                 .gateway_refused => try app.writeDomainNotice(.{
                     .topic = "auth",
                     .tone = .@"error",
-                    .body = "The AI Gateway refused that API key. Nothing was stored.",
+                    .body = "That API key could not be verified. Nothing was stored.",
                 }, true),
                 .gateway_unavailable => try app.writeDomainNotice(.{
                     .topic = "auth",
                     .tone = .@"error",
-                    .body = "Could not verify that API key with AI Gateway. Nothing was stored.",
+                    .body = "Could not verify that API key. Nothing was stored.",
                 }, true),
                 .store_failed => {
                     const body = try std.fmt.allocPrint(
@@ -976,49 +961,8 @@ pub fn Runtime(comptime App: type) type {
         }
 
         fn applyTeamChoice(app: *App, index: usize) !void {
-            const selection = app.auth.teamSelection() orelse return;
-            if (index >= selection.teams.items.len) return;
-            const team = selection.teams.items[index];
-            const body = try std.fmt.allocPrint(
-                app.alloc,
-                "Changed Vercel team to {s} ({s}).",
-                .{ team.name, team.slug },
-            );
-            defer app.alloc.free(body);
-
-            var selected_team = selection.select(app.alloc, index) catch |err| {
-                debug_trace.logf("auth", "team change failed err={s}", .{@errorName(err)});
-                app.auth.closePicker(app.alloc);
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .@"error",
-                    .body = switch (err) {
-                        error.SessionChanged, error.NoSession => "The fx login session changed before the team could be saved.",
-                        else => "Could not change the Vercel team. The current team is unchanged.",
-                    },
-                }, true);
-                return;
-            };
-            defer selected_team.deinit(app.alloc);
-
-            if (app.auth.credentialSource() == .fx_login) {
-                applyCredentialChange(app, app.auth.adoptSelectedTeam(app.alloc, &selected_team));
-            } else if (!try selectCredentialSource(app, .fx_login)) {
-                app.auth.closePicker(app.alloc);
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .@"error",
-                    .body = "Changed the Vercel team, but the fx login credential could not be loaded.",
-                }, true);
-                return;
-            }
-            rememberCredentialSource(app, .fx_login);
-            app.auth.closePicker(app.alloc);
-            try app.writeDomainNotice(.{
-                .topic = "auth",
-                .tone = .neutral,
-                .body = body,
-            }, true);
+            _ = index;
+            try beginTeamPicker(app);
         }
 
         fn beginSignIn(app: *App, from_root: bool) !void {
@@ -1571,39 +1515,31 @@ test "completed credential switch emits exactly one transcript line" {
     try std.testing.expectEqualStrings(expected, app.transcript.items);
 }
 
-test "team change from an environment source activates and remembers fx login" {
+test "team change stays a local notice and does not activate fx login" {
     var app: TestApp = .{};
     defer app.deinit();
     app.auth.select_result = true;
 
     try Runtime(TestApp).applyTeamChoice(&app, 0);
 
-    try std.testing.expectEqual(@as(usize, 1), app.auth.team_selection.select_count);
+    try std.testing.expectEqual(@as(usize, 0), app.auth.team_selection.select_count);
     try std.testing.expect(!app.auth.selected_team_adopted);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.auth.active_source.?);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.auth.selected_source.?);
-    try std.testing.expectEqual(@as(usize, 1), app.preference_write_count);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.last_preference_source.?);
-    try std.testing.expect(app.auth.picker_closed);
-    try std.testing.expectEqual(@as(usize, 1), app.model_cache.reset_count);
-    try std.testing.expectEqual(@as(usize, 1), app.model_cache_warmup_count);
+    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
     try std.testing.expectEqual(@as(usize, 1), app.notice_write_count);
-    try std.testing.expectEqualStrings(
-        "Changed Vercel team to Vercel Labs (vercel-labs).\n",
-        app.transcript.items,
-    );
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "Team switching is not supported") != null);
 }
 
-test "team change on an active fx login updates and remembers the selected team" {
+test "team change on an active fx login does not persist a team" {
     var app: TestApp = .{};
     defer app.deinit();
     app.auth.active_source = .fx_login;
 
     try Runtime(TestApp).applyTeamChoice(&app, 0);
 
-    try std.testing.expect(app.auth.selected_team_adopted);
-    try std.testing.expectEqual(@as(usize, 1), app.preference_write_count);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.last_preference_source.?);
+    try std.testing.expect(!app.auth.selected_team_adopted);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "Team switching is not supported") != null);
 }
 
 test "successful direct login remembers fx login after activation" {
@@ -1614,10 +1550,11 @@ test "successful direct login remembers fx login after activation" {
 
     try Runtime(TestApp).collectSignInFacts(&app);
 
-    try std.testing.expectEqual(credentials.Source.fx_login, app.auth.active_source.?);
-    try std.testing.expectEqual(@as(usize, 1), app.preference_write_count);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.last_preference_source.?);
+    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
+    try std.testing.expect(app.auth.picker_closed);
     try std.testing.expectEqual(@as(usize, 1), app.notice_write_count);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "That sign-in path is not supported") != null);
 }
 
 test "direct login source load failure leaves the environment preference unchanged" {
@@ -1630,8 +1567,8 @@ test "direct login source load failure leaves the environment preference unchang
 
     try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
     try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
-    try std.testing.expectEqual(@as(usize, 1), app.auth.picker_pop_count);
-    try std.testing.expect(std.mem.find(u8, app.transcript.items, "could not be loaded") != null);
+    try std.testing.expect(app.auth.picker_closed);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "That sign-in path is not supported") != null);
 }
 
 test "failed preference persistence keeps a successful direct login active" {
@@ -1643,9 +1580,10 @@ test "failed preference persistence keeps a successful direct login active" {
 
     try Runtime(TestApp).collectSignInFacts(&app);
 
-    try std.testing.expectEqual(credentials.Source.fx_login, app.auth.active_source.?);
-    try std.testing.expectEqual(@as(usize, 1), app.preference_write_count);
-    try std.testing.expectEqual(@as(?credentials.Source, null), app.last_preference_source);
+    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
+    try std.testing.expect(app.auth.picker_closed);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "That sign-in path is not supported") != null);
 }
 
 test "successful API key save persists even when the live credential is unchanged" {
@@ -1695,8 +1633,7 @@ test "team source load failure preserves the environment source and preference" 
 
     try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
     try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
-    try std.testing.expect(app.auth.picker_closed);
-    try std.testing.expect(std.mem.find(u8, app.transcript.items, "could not be loaded") != null);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "Team switching is not supported") != null);
 }
 
 test "prompt credential refresh reloads the catalog after the credential changes" {
