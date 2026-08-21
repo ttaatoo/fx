@@ -5491,7 +5491,7 @@ test "compact picker dismissal preserves committed history floor" {
             .topic = "status",
             .tone = .information,
             .body = "model=test-model\n" ++
-                "auth=AI_GATEWAY_API_KEY\n" ++
+                "auth=SuperGrok subscription\n" ++
                 "auth_refreshable=false\n" ++
                 "permission_mode=auto\n" ++
                 "sandbox=none\n" ++

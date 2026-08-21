@@ -2948,7 +2948,7 @@ test "profile publication failure preserves session totals and retries backlog" 
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -3029,7 +3029,7 @@ test "restored publication backlog settles the pending generation exactly" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try source.applyGeneration(alloc, .{
@@ -3116,7 +3116,7 @@ test "no-checkpoint usage drains a transient publication failure" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -3168,7 +3168,7 @@ test "missing profile publication sink keeps the durable pending bridge" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -3246,7 +3246,7 @@ test "usage snapshot parsing releases every partial allocation" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -3266,7 +3266,7 @@ test "usage snapshot parsing releases every partial allocation" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAW",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         "team_1",
     );
 
@@ -3317,7 +3317,7 @@ test "fresh usage aggregates authoritative generations in invocation order" {
         125,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         "team_1",
     );
     try usage.applyGeneration(alloc, .{
@@ -3338,7 +3338,7 @@ test "fresh usage aggregates authoritative generations in invocation order" {
         75,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAW",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         "team_1",
     );
     try usage.applyGeneration(alloc, .{
@@ -3389,7 +3389,7 @@ test "usage deduplicates terminal and generation callbacks" {
         10,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.finishObservedInvocation(
@@ -3398,7 +3398,7 @@ test "usage deduplicates terminal and generation callbacks" {
         10,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     const record = GenerationRecord{
@@ -3434,7 +3434,7 @@ test "usage deduplicates callbacks after the durable settlement boundary" {
         10,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -3459,7 +3459,7 @@ test "usage deduplicates callbacks after the durable settlement boundary" {
         10,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
 
@@ -3483,7 +3483,7 @@ test "model aggregates remain ordered by invocation when reconciliation finishes
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.finishObservedInvocation(
@@ -3492,7 +3492,7 @@ test "model aggregates remain ordered by invocation when reconciliation finishes
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAW",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
 
@@ -3558,7 +3558,7 @@ test "active invocation dominates separate pending and publication state" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
 
@@ -3642,7 +3642,7 @@ test "generation allocation failure marks billing incomplete before snapshot" {
             1,
             .observed_generation,
             "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            "https://ai-gateway.vercel.sh",
+            "https://cli-chat-proxy.grok.com/v1",
             null,
         ),
     );
@@ -3713,7 +3713,7 @@ test "pending and ambiguous generation states remain honest" {
         8,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
 
@@ -3741,7 +3741,7 @@ test "successful response without generation identity marks billing incomplete" 
         alloc,
         .ok,
         .{},
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
 
@@ -3894,7 +3894,7 @@ test "terminal Gateway billing settles the durable observation immediately" {
                 .billable_web_search_calls = 2,
             },
         },
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
 
@@ -3920,7 +3920,7 @@ test "successful retry after ambiguous delivery retains known generation" {
             .generation_id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
             .delivery_ambiguous = true,
         },
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -4013,7 +4013,7 @@ test "usage keeps more than sixteen exact resolved models" {
             1,
             .observed_generation,
             id,
-            "https://ai-gateway.vercel.sh",
+            "https://cli-chat-proxy.grok.com/v1",
             null,
         );
         try usage.applyGeneration(alloc, .{
@@ -4083,7 +4083,7 @@ test "sixteenth pending generation is the capacity boundary" {
             1,
             .observed_generation,
             id,
-            "https://ai-gateway.vercel.sh",
+            "https://cli-chat-proxy.grok.com/v1",
             null,
         );
     }
@@ -4111,7 +4111,7 @@ test "sixteenth pending generation is the capacity boundary" {
             1,
             .observed_generation,
             overflow_id,
-            "https://ai-gateway.vercel.sh",
+            "https://cli-chat-proxy.grok.com/v1",
             null,
         ),
     );
@@ -4137,7 +4137,7 @@ test "populated usage snapshot keeps the rollback-readable durable shape" {
         120,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         "team_alpha",
     );
     try usage.applyGeneration(alloc, .{
@@ -4158,7 +4158,7 @@ test "populated usage snapshot keeps the rollback-readable durable shape" {
         90,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAW",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -4181,7 +4181,7 @@ test "populated usage snapshot keeps the rollback-readable durable shape" {
         30,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAX",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         "team_beta",
     );
     try usage.recordCommittedLines(5, 3);
@@ -4302,7 +4302,7 @@ test "rich usage snapshot preserves optional metrics and recovery state" {
         5,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -4324,7 +4324,7 @@ test "rich usage snapshot preserves optional metrics and recovery state" {
         6,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAW",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         "team_alpha",
     );
 
@@ -4654,7 +4654,7 @@ test "gateway observation checkpoints active and terminal usage states" {
         alloc,
         .ok,
         .{ .generation_id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try std.testing.expectEqual(@as(usize, 2), capture.calls);
@@ -4728,7 +4728,7 @@ test "terminal checkpoint failure preserves request progress as incomplete" {
 }
 
 test "pending generation origins remain bounded transport inputs" {
-    try validateOrigin("https://ai-gateway.vercel.sh");
+    try validateOrigin("https://cli-chat-proxy.grok.com/v1");
     try validateOrigin("http://127.0.0.1:3000");
     try validateOrigin("https://provider.example");
 

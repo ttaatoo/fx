@@ -261,7 +261,7 @@ fn composeSignInPickerRow(
         else if (source == .grok_subscription)
             "   Sign in with SuperGrok"
         else
-            "   Sign in with Vercel",
+            "   Sign in with SuperGrok",
         1, 4 => "",
         2 => std.fmt.bufPrint(
             &label_buf,
@@ -272,7 +272,7 @@ fn composeSignInPickerRow(
         else if (source == .grok_subscription)
             "   Open the SuperGrok authorization page"
         else
-            "   Open the Vercel device authorization page",
+            "   Open the SuperGrok authorization page",
         3 => if (snapshot.user_code.len == 0)
             ""
         else
@@ -1804,7 +1804,7 @@ test "sign-in stage renders the complete device authorization screen" {
         try screen.append(alloc, '\n');
     }
     for ([_][]const u8{
-        "Sign in with Vercel",
+        "Sign in with SuperGrok",
         "Open   https://vercel.test/verify",
         "Code   TEST-CODE",
         "Waiting for authorization",

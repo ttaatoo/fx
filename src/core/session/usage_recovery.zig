@@ -282,7 +282,7 @@ test "recovery registry reads only marked durable session state" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try runtime_usage.applyGeneration(alloc, .{

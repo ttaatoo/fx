@@ -15,6 +15,8 @@ const session_codec = @import("../../../session/session_codec.zig");
 const command_replay_store = @import("../../../session/command_replay_store.zig");
 const session_child_store = @import("../../../session/session_child_store.zig");
 const gateway_json = @import("../../../gateway/gateway_json.zig");
+const gateway_schema = @import("../../../tooling/gateway_schema.zig");
+const tool_advertisement = @import("../../../tooling/tool_advertisement.zig");
 const gateway_failure_diagnostics = @import("../../../gateway/gateway_failure_diagnostics.zig");
 const lifecycle_hooks = @import("../../../hooks/hooks.zig");
 const model_capabilities = @import("../../../config/model_capabilities.zig");
@@ -380,22 +382,142 @@ fn fakeGatewayBuild(
     alloc: Allocator,
     request: agent_stream_provider.BuildRequest,
 ) ![]u8 {
+    const budget: ?gateway_json.BuildBudget = if (request.budget) |value|
+        .{ .deadline = value.deadline, .cancel_flag = value.cancel_flag }
+    else
+        null;
+    if (budget) |active| try active.check();
+
+    if (request.verified_images) |images| {
+        const response_format = request.response_format orelse
+            return error.MissingStructuredResponseFormat;
+        const body = try gateway_json.buildGatewayRequestBodyWithVerifiedImagesAndBudget(
+            alloc,
+            request.serialized_tools,
+            request.messages,
+            images,
+            request.provider_options,
+            request.tool_choice,
+            .{
+                .name = response_format.name,
+                .description = response_format.description,
+                .schema_json = response_format.schema_json,
+            },
+            budget orelse .{},
+        );
+        return finalizeFakeGatewayRequestBody(alloc, request.model, body);
+    }
+    if (request.response_format != null) return error.StructuredResponseRequiresVerifiedImages;
+
+    if (request.vision_mode == .unavailable and request.selected_dynamic_tool_schemas.len == 0) {
+        const body = if (budget) |active|
+            gateway_json.buildGatewayRequestBodyWithOptionsAndBudget(
+                alloc,
+                request.serialized_tools,
+                request.messages,
+                request.provider_options,
+                request.tool_choice,
+                request.max_output_tokens,
+                active,
+            )
+        else
+            gateway_json.buildGatewayRequestBodyWithOptionsAndOutputLimit(
+                alloc,
+                request.serialized_tools,
+                request.messages,
+                request.provider_options,
+                request.tool_choice,
+                request.max_output_tokens,
+            );
+        return finalizeFakeGatewayRequestBody(alloc, request.model, try body);
+    }
+
+    const vision_schema = if (request.vision_mode != .unavailable)
+        try writeVisionGatewaySchema(alloc, request.tool_registry)
+    else
+        null;
+    defer if (vision_schema) |schema| alloc.free(schema);
+
+    if (request.vision_mode == .required) {
+        const tools_json = try std.fmt.allocPrint(alloc, "[{s}]", .{vision_schema.?});
+        defer alloc.free(tools_json);
+        const body = if (budget) |active|
+            gateway_json.buildGatewayRequiredToolRequestBodyWithOptionsAndBudget(
+                alloc,
+                tools_json,
+                request.messages,
+                request.provider_options,
+                request.max_output_tokens,
+                active,
+            )
+        else
+            gateway_json.buildGatewayRequiredToolRequestBodyWithOptionsAndOutputLimit(
+                alloc,
+                tools_json,
+                request.messages,
+                request.provider_options,
+                request.max_output_tokens,
+            );
+        return finalizeFakeGatewayRequestBody(alloc, request.model, try body);
+    }
+
+    var schemas: std.ArrayList([]const u8) = .empty;
+    defer schemas.deinit(alloc);
+    try schemas.appendSlice(alloc, request.selected_dynamic_tool_schemas);
+    if (vision_schema) |schema| try schemas.append(alloc, schema);
+    const tools_json = try tool_advertisement.buildGatewayToolsJsonWithSelectedDynamicSchemas(
+        alloc,
+        request.serialized_tools,
+        schemas.items,
+    );
+    defer alloc.free(tools_json);
+    const body = if (budget) |active|
+        gateway_json.buildGatewayRequestBodyWithOptionsAndBudget(
+            alloc,
+            tools_json,
+            request.messages,
+            request.provider_options,
+            request.tool_choice,
+            request.max_output_tokens,
+            active,
+        )
+    else
+        gateway_json.buildGatewayRequestBodyWithOptionsAndOutputLimit(
+            alloc,
+            tools_json,
+            request.messages,
+            request.provider_options,
+            request.tool_choice,
+            request.max_output_tokens,
+        );
+    return finalizeFakeGatewayRequestBody(alloc, request.model, try body);
+}
+
+fn finalizeFakeGatewayRequestBody(
+    alloc: Allocator,
+    model: []const u8,
+    body: []u8,
+) ![]u8 {
+    if (!std.mem.eql(u8, model, "zai/glm-5.2")) return body;
+
+    errdefer alloc.free(body);
+    const identified = try gateway_json.withRequestUserAgent(
+        alloc,
+        body,
+        gateway_client.user_agent,
+    );
+    alloc.free(body);
+    return identified;
+}
+
+fn writeVisionGatewaySchema(
+    alloc: Allocator,
+    registry: tool_dispatch.Registry,
+) ![]u8 {
+    const vision_tool = registry.lookup("vision") orelse return error.VisionToolNotRegistered;
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
-    try out.writer.writeAll("{\"model\":");
-    try std.json.Stringify.value(request.model, .{}, &out.writer);
-    try out.writer.writeAll(",\"tools\":");
-    try out.writer.writeAll(request.serialized_tools);
-    try out.writer.writeAll(",\"messages\":[");
-    for (request.messages, 0..) |message, i| {
-        if (i > 0) try out.writer.writeByte(',');
-        try out.writer.writeAll("{\"role\":\"");
-        try out.writer.writeAll(@tagName(message.role));
-        try out.writer.writeAll("\",\"content\":");
-        try std.json.Stringify.value(message.content orelse "", .{}, &out.writer);
-        try out.writer.writeByte('}');
-    }
-    try out.writer.writeAll("]}");
+    try gateway_schema.writeBuiltinFunctionSchema(alloc, &out.writer, vision_tool.gateway_schema);
     return out.toOwnedSlice();
 }
 

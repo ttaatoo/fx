@@ -338,7 +338,7 @@ test "usage sidecar restores rich fields only for its bound session and projecti
         5,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{
@@ -449,7 +449,7 @@ test "non-billing rollback changes keep canonical values and rich metrics" {
         5,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try usage.applyGeneration(alloc, .{

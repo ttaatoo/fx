@@ -39,7 +39,7 @@ test "built-in modes register exact ACP order and permission policy" {
     try std.testing.expect(lookup("unknown") == null);
 }
 
-test "ask and code mode projections carry included custom provider guidance" {
+test "ask and code mode projections advertise native web_search" {
     inline for (&.{ "ask", "code" }) |mode_id| {
         var projection = try registry.buildGatewayToolProjection(
             std.testing.allocator,
@@ -49,8 +49,9 @@ test "ask and code mode projections carry included custom provider guidance" {
         );
         defer projection.deinit(std.testing.allocator);
 
-        try std.testing.expect(std.mem.find(u8, projection.tools_json, "gateway.perplexity_search") != null);
-        try std.testing.expectEqualStrings(builtin_tools.web_search.description, projection.custom_guidance);
+        try std.testing.expect(std.mem.find(u8, projection.tools_json, "\"name\":\"web_search\"") != null);
+        try std.testing.expect(std.mem.find(u8, projection.tools_json, "gateway.perplexity_search") == null);
+        try std.testing.expectEqualStrings("", projection.custom_guidance);
     }
 }
 

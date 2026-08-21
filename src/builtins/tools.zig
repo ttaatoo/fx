@@ -948,11 +948,6 @@ pub const web_fetch = ToolSpec{
     .irreversible_fn = web_fetch_impl.isIrreversible,
 };
 
-fn writeWebSearchGatewayAdvertisement(
-    _: Allocator,
-    _: *std.Io.Writer,
-) tool_dispatch.GatewayAdvertisementError!void {}
-
 pub const web_search = ToolSpec{
     .name = "web_search",
     .description = web_search_description,
@@ -969,8 +964,7 @@ pub const web_search = ToolSpec{
             .additional_properties = false,
         },
     },
-    .write_gateway_advertisement_fn = writeWebSearchGatewayAdvertisement,
-    .provider_executed = true,
+    .provider_executed = false,
     .executor_kind = .web_search,
     .activity_kind = .read,
     .requires_approval = false,
@@ -2403,20 +2397,15 @@ test "built-in web_search is registered in default production tools" {
     try std.testing.expect(lookup("web_search") != null);
 }
 
-test "built-in web_search owns its Gateway provider advertisement" {
+test "built-in web_search advertises a native function schema" {
     const registered = registry.lookup("web_search") orelse return error.TestExpectedEqual;
-    const write_advertisement = registered.write_gateway_advertisement_fn orelse return error.TestExpectedEqual;
+    try std.testing.expect(registered.write_gateway_advertisement_fn == null);
+    try std.testing.expect(!registered.provider_executed);
 
-    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-    try write_advertisement(std.testing.allocator, &out.writer);
-    const json = try out.toOwnedSlice();
+    const json = try tool_specs.toolGatewaySchemaJson(std.testing.allocator, web_search);
     defer std.testing.allocator.free(json);
-
-    try std.testing.expectEqualStrings(
-        "{\"type\":\"provider\",\"id\":\"gateway.perplexity_search\",\"name\":\"perplexity_search\",\"args\":{\"maxResults\":10,\"maxTokens\":4096}}",
-        json,
-    );
+    try std.testing.expect(std.mem.find(u8, json, "\"name\":\"web_search\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "gateway.perplexity_search") == null);
 }
 
 fn expectWebSearchSchemaContains(needle: []const u8) !void {

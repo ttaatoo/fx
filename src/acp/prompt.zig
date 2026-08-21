@@ -2684,7 +2684,7 @@ test "ACP usage checkpoints maintain the profile recovery marker" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     var pending = try usage.snapshot(alloc);
@@ -3174,14 +3174,14 @@ test "ACP auth failure emits a valid detail-free JSON-RPC notification" {
     var state = try initTestAcpState(alloc, "/tmp/workspace", .ask);
     defer state.deinit();
     state.writer = .{ .stdout = capture };
-    state.active_session.?.credential_source = .vercel_oidc_token;
+    state.active_session.?.credential_source = .grok_subscription;
     var ctx = AcpContext{
         .alloc = alloc,
         .state = &state,
         .session_id = "session_1",
     };
     try std.testing.expectEqual(
-        types.CredentialSource.vercel_oidc_token,
+        types.CredentialSource.grok_subscription,
         ctx.toolContext().credential_source.?,
     );
 
@@ -3206,7 +3206,7 @@ test "ACP auth failure emits a valid detail-free JSON-RPC notification" {
     const update = parsed.value.object.get("params").?.object.get("update").?.object;
     const content = update.get("content").?.object;
     try std.testing.expectEqualStrings(
-        "VERCEL_OIDC_TOKEN authentication failed · HTTP 401",
+        "SuperGrok subscription authentication failed · HTTP 401",
         content.get("text").?.string,
     );
     try std.testing.expect(std.mem.find(u8, captured, "access-token-secret") == null);
@@ -4352,7 +4352,7 @@ test "ACP admits default-safe web_fetch before execution" {
     try std.testing.expectEqual(ToolPermissionDecision.once, decision);
 }
 
-test "ACP full advertisement includes direct provider search with explicit permission" {
+test "ACP full advertisement includes native web_search with explicit permission" {
     var rules = [_]types.PermissionRule{
         .{ .permission = @constCast("web_search"), .pattern = @constCast("*"), .action = .allow },
     };
@@ -4362,9 +4362,9 @@ test "ACP full advertisement includes direct provider search with explicit permi
     defer projection.deinit(std.testing.allocator);
     const json = projection.tools_json;
 
-    try std.testing.expect(std.mem.find(u8, json, "\"name\":\"web_search\"") == null);
-    try std.testing.expect(std.mem.find(u8, json, "gateway.perplexity_search") != null);
-    try std.testing.expectEqualStrings(builtin_tools.web_search.description, projection.custom_guidance);
+    try std.testing.expect(std.mem.find(u8, json, "\"name\":\"web_search\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "gateway.perplexity_search") == null);
+    try std.testing.expectEqualStrings("", projection.custom_guidance);
 }
 
 test "ACP prompt agent config carries request options from active session" {
