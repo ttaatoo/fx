@@ -61,7 +61,7 @@ pub const QueuedPrompt = struct {
     images: []types.ImageAttachment,
     authorized_image_catalog: []types.ImageAttachment = &.{},
     model: []u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     api_key: []u8,
     gateway_team: ?[]u8 = null,
     credential_source: ?types.CredentialSource = null,

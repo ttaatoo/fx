@@ -1,6 +1,5 @@
 const std = @import("std");
 const std_builtin = @import("builtin");
-const builtin_gateway = @import("gateway.zig");
 const terminal_contracts = @import("../core/terminal/contracts.zig");
 const terminal_monitor = @import("../core/terminal/monitor.zig");
 const gateway_schema = @import("../core/tooling/gateway_schema.zig");
@@ -950,22 +949,9 @@ pub const web_fetch = ToolSpec{
 };
 
 fn writeWebSearchGatewayAdvertisement(
-    alloc: Allocator,
-    writer: *std.Io.Writer,
-) tool_dispatch.GatewayAdvertisementError!void {
-    const policy = builtin_gateway.default_web_search_policy;
-    const provider_tools = try builtin_gateway.providerToolsJson(alloc, .{
-        .backend = try builtin_gateway.selectedWebSearchBackend(),
-        .max_results = policy.max_results,
-        .max_output_tokens = policy.max_output_tokens,
-        .max_output_chars = policy.max_output_chars,
-    });
-    defer alloc.free(provider_tools);
-    if (provider_tools.len < 2 or provider_tools[0] != '[' or provider_tools[provider_tools.len - 1] != ']') {
-        return error.InvalidGatewayAdvertisement;
-    }
-    try writer.writeAll(provider_tools[1 .. provider_tools.len - 1]);
-}
+    _: Allocator,
+    _: *std.Io.Writer,
+) tool_dispatch.GatewayAdvertisementError!void {}
 
 pub const web_search = ToolSpec{
     .name = "web_search",

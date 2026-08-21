@@ -37,13 +37,11 @@ pub const ProviderRoute = struct {
 };
 
 pub const ProviderRoutes = struct {
-    gateway: ProviderRoute,
     codex: ProviderRoute,
     direct: ProviderRoute,
 
     pub fn select(self: ProviderRoutes, provider: model_provider.ProviderId) ProviderRoute {
         return switch (provider) {
-            .gateway => self.gateway,
             .codex => self.codex,
             .anthropic, .xai => self.direct,
         };
@@ -51,10 +49,10 @@ pub const ProviderRoutes = struct {
 };
 
 test "provider routes select independent streams and reviewers" {
-    var gateway_tag: u8 = 0;
+    var direct_tag: u8 = 0;
     var codex_tag: u8 = 0;
-    var gateway_stream = stream_provider.unavailable_provider;
-    gateway_stream.context = &gateway_tag;
+    var direct_stream = stream_provider.unavailable_provider;
+    direct_stream.context = &direct_tag;
     var codex_stream = stream_provider.unavailable_provider;
     codex_stream.context = &codex_tag;
     const Reviewer = struct {
@@ -67,18 +65,15 @@ test "provider routes select independent streams and reviewers" {
             return .invalid;
         }
     };
-    const gateway_reviewer = auto_classifier.Provider{ .context = &gateway_tag, .review_fn = Reviewer.review };
     const codex_reviewer = auto_classifier.Provider{ .context = &codex_tag, .review_fn = Reviewer.review };
     const routes = ProviderRoutes{
-        .gateway = .{ .agent_stream_provider = gateway_stream, .permission_reviewer_provider = gateway_reviewer },
         .codex = .{ .agent_stream_provider = codex_stream, .permission_reviewer_provider = codex_reviewer },
-        .direct = .{ .agent_stream_provider = gateway_stream, .permission_reviewer_provider = null },
+        .direct = .{ .agent_stream_provider = direct_stream, .permission_reviewer_provider = null },
     };
 
-    try std.testing.expect(routes.select(.gateway).agent_stream_provider.context.? == @as(*anyopaque, @ptrCast(&gateway_tag)));
-    try std.testing.expect(routes.select(.gateway).permission_reviewer_provider.?.context.? == @as(*anyopaque, @ptrCast(&gateway_tag)));
     try std.testing.expect(routes.select(.codex).agent_stream_provider.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
     try std.testing.expect(routes.select(.codex).permission_reviewer_provider.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
+    try std.testing.expect(routes.select(.anthropic).agent_stream_provider.context.? == @as(*anyopaque, @ptrCast(&direct_tag)));
     try std.testing.expect(routes.select(.anthropic).permission_reviewer_provider == null);
     try std.testing.expect(routes.select(.xai).permission_reviewer_provider == null);
 }
@@ -214,7 +209,7 @@ pub fn run(
     }
     routed_config.tool_context.model = admission.model;
     routed_config.tool_context.provider = admission.provider;
-    if (!model_provider.usesGatewayAuxiliaries(admission.provider)) {
+    if (!false) {
         routed_config.tool_context.web_search_backend = null;
         routed_config.tool_context.web_search_runtime_ready = false;
     }

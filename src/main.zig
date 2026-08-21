@@ -129,7 +129,6 @@ const web_fetch_runtime = @import("core/tooling/web_fetch_runtime.zig");
 const web_search_runtime = @import("core/tooling/web_search_runtime.zig");
 const worker_runtime = @import("core/agent/worker_runtime.zig");
 const question_prompt = @import("core/agent/question_prompt.zig");
-const gateway_client = @import("gateway/client.zig");
 const url_opener = @import("core/hosts/url_opener.zig");
 const event_loop = @import("ui/event_loop.zig");
 const wasm_terminal = if (host_target.is_wasm) @import("ui/terminal/wasm_terminal.zig") else struct {};
@@ -187,13 +186,8 @@ const resize_debounce_ms: i64 = 100;
 const max_transcript_bytes: usize = 256 * 1024;
 const default_max_agent_steps: usize = agent_steps.default_max_agent_steps;
 const native_gateway_provider = gateway_provider.Provider{
-    .agent_stream = agent_stream_provider.unavailable_provider,
     .oauth_transport = builtin_gateway.oauth_transport_provider,
-    .chat_url = builtin_gateway.chat_url_provider,
     .cli_model_catalog = direct_provider.cli_model_catalog_provider,
-    .credits = builtin_gateway.credits_provider,
-    .generation_usage = generation_usage_provider.unavailable_provider,
-    .web_search = builtin_gateway.default_web_search_provider,
     .model_catalog = direct_provider.model_catalog_provider,
 };
 const max_history_turns: usize = 8;
@@ -437,10 +431,6 @@ const App = struct {
             js_host_url_opener.opener
         else
             host.unavailable_url_opener;
-    }
-
-    pub fn creditsProvider(_: *const Self) gateway_provider.CreditsProvider {
-        return builtin_gateway.credits_provider;
     }
 
     pub fn agentStreamProvider(self: *const Self) agent_stream_provider.Provider {
@@ -1595,10 +1585,6 @@ const App = struct {
 
     pub fn subagentProviderRoutes(_: *const App) subagent_agent_adapter.ProviderRoutes {
         return .{
-            .gateway = .{
-                .agent_stream_provider = agent_stream_provider.unavailable_provider,
-                .permission_reviewer_provider = null,
-            },
             .codex = .{
                 .agent_stream_provider = if (comptime host_target.is_wasm)
                     agent_stream_provider.unavailable_provider
@@ -3266,7 +3252,7 @@ fn fullEntryConfig() app_entry_runtime.Config {
         .default_agent_step_limit = default_max_agent_steps,
         .models_path = builtin_gateway.models_path,
         .gateway_retry_count = builtin_gateway.retry_count,
-        .gateway_chat_url = builtin_gateway.default_chat_url,
+        .gateway_chat_url = builtin_gateway.defaultChatUrl(),
         .gateway_provider = native_gateway_provider,
         .codex_agent_stream = builtin_providers.agentStream(.codex),
         .codex_cli_model_catalog = openai_codex_models.cli_model_catalog_provider,
@@ -3306,7 +3292,7 @@ fn localEntryConfig() app_entry_runtime.Config {
         .default_agent_step_limit = default_max_agent_steps,
         .models_path = builtin_gateway.models_path,
         .gateway_retry_count = builtin_gateway.retry_count,
-        .gateway_chat_url = builtin_gateway.default_chat_url,
+        .gateway_chat_url = builtin_gateway.defaultChatUrl(),
         .gateway_provider = native_gateway_provider,
         .codex_agent_stream = builtin_providers.agentStream(.codex),
         .codex_cli_model_catalog = openai_codex_models.cli_model_catalog_provider,
@@ -3988,6 +3974,5 @@ test {
     _ = @import("ui/transcript/runtime.zig");
     _ = @import("ui/transcript/runtime_tests.zig");
     _ = @import("core/agent/worker_runtime.zig");
-    _ = @import("gateway/client.zig");
-    _ = @import("gateway/host_stream_provider.zig");
+    _ = @import("gateway/http.zig");
 }

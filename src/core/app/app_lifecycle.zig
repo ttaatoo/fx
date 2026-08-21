@@ -1123,9 +1123,9 @@ fn configuredProviderSelection(
     settings: *const config_runtime.Settings,
 ) !model_provider.ProviderSelection {
     const raw = settings.provider orelse model_provider.default_id;
-    const provider = if (model_provider.isRetired(raw)) model_provider.default_id else raw;
+    const provider = raw;
     const model = switch (provider) {
-        .gateway, .anthropic, .xai => settings.model orelse default_model,
+        .anthropic, .xai => settings.model orelse default_model,
         .codex => settings.codex_model orelse return error.CodexModelNotSelected,
     };
     return .{ .provider = provider, .model = model };
@@ -1137,7 +1137,7 @@ const ResolvedStartupSelection = struct {
     selected_model: []u8,
 };
 
-fn resolveStartupSelection(
+pub fn resolveStartupSelection(
     alloc: Allocator,
     default_model: []const u8,
     settings: *const config_runtime.Settings,
@@ -1146,7 +1146,7 @@ fn resolveStartupSelection(
     var catalog = try direct_providers.loadFromHome(alloc);
     defer catalog.deinit();
     const process_model = initialModelId(default_model, configured.model);
-    const provider_explicit = if (settings.provider) |provider| !model_provider.isRetired(provider) else false;
+    const provider_explicit = settings.provider != null;
     const overlaid = direct_providers.overlayStartupSelection(
         &catalog,
         .{ .provider = configured.provider, .model = configured.model },
@@ -1169,7 +1169,7 @@ fn initialModelId(default_model: []const u8, configured: ?[]const u8) []const u8
 test "startup provider chooses only its provider-scoped model" {
     const gateway_settings = config_runtime.Settings{
         .model = @constCast("gateway/model"),
-        .provider = .gateway,
+        .provider = .xai,
         .codex_model = @constCast("gpt-model"),
     };
     const gateway = try configuredProviderSelection("default/model", &gateway_settings);

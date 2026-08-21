@@ -39,10 +39,6 @@ const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const tool_mcp_runtime = @import("../tooling/tool_mcp_runtime.zig");
 const context_contract = @import("../workspace/context_contract.zig");
 const model_catalog = @import("../gateway/model_catalog.zig");
-const test_builtin_gateway = if (@import("builtin").is_test)
-    @import("../../builtins/gateway.zig")
-else
-    struct {};
 const test_builtin_tools = if (@import("builtin").is_test)
     @import("../../builtins/tools.zig")
 else
@@ -292,7 +288,7 @@ pub fn Runtime(comptime App: type) type {
                 ctx.on_web_fetch_progress = app_callbacks.Bindings(App).onWebFetchProgress;
             }
             if (comptime @hasField(App, "web_search_runtime")) {
-                if (model_provider.usesGatewayAuxiliaries(provider_runtime.provider(app))) {
+                if (false) {
                     app.web_search_runtime.configure(.{
                         .api_key = app.auth.apiKey() orelse "",
                         .gateway_team = app.auth.gatewayTeam(),
@@ -1057,10 +1053,6 @@ pub fn Runtime(comptime App: type) type {
                 app.subagentProviderRoutes()
             else
                 subagent_agent_adapter.ProviderRoutes{
-                    .gateway = .{
-                        .agent_stream_provider = tool_context.agent_stream_provider,
-                        .permission_reviewer_provider = tool_context.permission_reviewer_provider,
-                    },
                     .codex = .{
                         .agent_stream_provider = tool_context.agent_stream_provider,
                         .permission_reviewer_provider = tool_context.permission_reviewer_provider,
@@ -1445,7 +1437,7 @@ const FakeApp = struct {
     workspace_root: []const u8 = "/tmp/workspace",
     auth: auth_runtime.Runtime = .{},
     selected_model: std.ArrayList(u8) = .empty,
-    selected_provider: model_provider.ProviderId = .gateway,
+    selected_provider: model_provider.ProviderId = .xai,
     permission_engine: permissions.PermissionEngine = .{},
     agent_step_limit: usize = 8,
     fast_mode: bool = true,
@@ -1475,7 +1467,7 @@ const FakeApp = struct {
     diff_blocks: usize = 0,
     web_fetch_runtime: web_fetch_runtime.Runtime = web_fetch_runtime.Runtime.init(.{}),
     web_search_runtime: web_search_runtime.Runtime = web_search_runtime.Runtime.init(.{
-        .provider = test_builtin_gateway.default_web_search_provider,
+        .provider = null,
     }),
     web_search_models_path: []const u8 = "/models",
     lifecycle_runtime: hooks.Runtime,
@@ -1691,10 +1683,19 @@ const FakeApp = struct {
     }
 };
 
+fn testAgentStreamBuild(
+    _: ?*anyopaque,
+    alloc: Allocator,
+    _: agent_stream_provider.BuildRequest,
+) anyerror![]u8 {
+    return alloc.dupe(u8, "{}");
+}
+
 fn testAgentStreamProvider(stream_fn: agent_stream_provider.StreamFn) agent_stream_provider.Provider {
-    var provider = test_builtin_gateway.agent_stream_provider;
-    provider.stream_fn = stream_fn;
-    return provider;
+    return .{
+        .build_fn = testAgentStreamBuild,
+        .stream_fn = stream_fn,
+    };
 }
 
 const TestCatalogProvider = struct {

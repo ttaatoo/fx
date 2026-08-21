@@ -74,10 +74,6 @@ const test_builtin_tools = if (builtin.is_test)
     @import("../../builtins/tools.zig")
 else
     struct {};
-const test_builtin_gateway = if (builtin.is_test)
-    @import("../../builtins/gateway.zig")
-else
-    struct {};
 const test_browser_workspace_tools = if (builtin.is_test)
     @import("../../builtins/browser_workspace_tools.zig")
 else
@@ -138,7 +134,7 @@ pub const Context = struct {
     gateway_team: ?[]const u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     oauth_transport: oauth_transport.Provider = oauth_transport.unavailable_provider,
     secret_store: host_mod.SecretStore = host_mod.unavailable_secret_store,
     model: []const u8,
@@ -303,9 +299,8 @@ fn registeredToolSpec(ctx: Context, name: []const u8) ?*const tool_specs.ToolSpe
     return ctx.tool_registry.lookup(name);
 }
 
-fn providerDisablesTool(provider: model_provider.ProviderId, name: []const u8) bool {
-    return std.mem.eql(u8, name, "vision") and
-        !model_provider.usesGatewayAuxiliaries(provider);
+fn providerDisablesTool(_: model_provider.ProviderId, name: []const u8) bool {
+    return std.mem.eql(u8, name, "vision");
 }
 
 pub fn validateToolCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_contracts.ToolCallValidationResult {
@@ -2136,7 +2131,7 @@ const TestRuntime = struct {
     max_command_output_bytes: usize = 64 * 1024,
     max_tool_result_bytes: usize = 64 * 1024,
     api_key: []const u8 = "",
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     gateway_team: ?[]const u8 = null,
     gateway_retry_count: usize = 0,
     gateway_chat_url: []const u8 = "",
@@ -8351,11 +8346,20 @@ const VisionGatewayFixture = struct {
         self.payloads.deinit(self.alloc);
     }
 
+    fn unusedVisionBuild(
+        _: ?*anyopaque,
+        alloc: Allocator,
+        _: agent_stream_provider.BuildRequest,
+    ) anyerror![]u8 {
+        return alloc.dupe(u8, "{}");
+    }
+
     fn provider(self: *VisionGatewayFixture) agent_stream_provider.Provider {
-        var result = test_builtin_gateway.agent_stream_provider;
-        result.context = self;
-        result.stream_fn = stream;
-        return result;
+        return .{
+            .context = self,
+            .build_fn = unusedVisionBuild,
+            .stream_fn = stream,
+        };
     }
 
     fn stream(
@@ -8387,7 +8391,7 @@ const VisionGatewayFixture = struct {
                 .finish_reason = .stop,
                 .usage = response.usage,
             },
-            .generation_origin = "https://ai-gateway.vercel.sh",
+            .generation_origin = "https://cli-chat-proxy.grok.com/v1",
         };
     }
 };

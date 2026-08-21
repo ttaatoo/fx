@@ -6,7 +6,6 @@ const io_mod = @import("../shared/io.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
 const background_commands = @import("../background/background_commands.zig");
-const gateway_provider = @import("../gateway/gateway_provider.zig");
 const host = @import("../hosts/host.zig");
 const change_tracker_mod = @import("../workspace/change_tracker.zig");
 const command_router = @import("../slash_commands/command_router.zig");
@@ -3562,46 +3561,13 @@ fn writeSandboxPersistenceFailure(app: anytype, err: anyerror) !void {
 const SurfaceOnlyApp = struct {};
 
 const CreditsCommandFakeApp = struct {
-    const FakeAuth = struct {
-        fn apiKey(_: *const FakeAuth) ?[]const u8 {
-            return "credential";
-        }
-
-        fn gatewayTeam(_: *const FakeAuth) ?[]const u8 {
-            return "tenant";
-        }
-    };
-
     alloc: std.mem.Allocator,
-    auth: FakeAuth = .{},
-    calls: usize = 0,
-    saw_expected_input: bool = false,
     notice_body: std.ArrayList(u8) = .empty,
     notice_topic: ?[]const u8 = null,
     notice_tone: ?types.NoticeTone = null,
 
     fn deinit(self: *CreditsCommandFakeApp) void {
         self.notice_body.deinit(self.alloc);
-    }
-
-    fn creditsProvider(self: *CreditsCommandFakeApp) gateway_provider.CreditsProvider {
-        return .{
-            .context = self,
-            .fetch_fn = fetchCredits,
-        };
-    }
-
-    fn fetchCredits(
-        raw: ?*anyopaque,
-        alloc: std.mem.Allocator,
-        input: gateway_provider.CreditsLookupInput,
-    ) output_contracts.CreditsSnapshot {
-        const self: *CreditsCommandFakeApp = @ptrCast(@alignCast(raw.?));
-        self.calls += 1;
-        self.saw_expected_input =
-            std.mem.eql(u8, input.credential orelse "", "credential") and
-            std.mem.eql(u8, input.tenant orelse "", "tenant");
-        return .{ .balance = alloc.dupe(u8, "10") catch null };
     }
 
     noinline fn writeDomainNotice(
@@ -4335,11 +4301,9 @@ test "credits command renders through the composed provider" {
 
     try Handlers(CreditsCommandFakeApp).commandShowCredits(@ptrCast(&app));
 
-    try std.testing.expectEqual(@as(usize, 1), app.calls);
-    try std.testing.expect(app.saw_expected_input);
     try std.testing.expectEqualStrings("credits", app.notice_topic.?);
-    try std.testing.expectEqual(types.NoticeTone.neutral, app.notice_tone.?);
-    try std.testing.expectEqualStrings("balance=10", app.notice_body.items);
+    try std.testing.expectEqual(types.NoticeTone.warning, app.notice_tone.?);
+    try std.testing.expect(std.mem.find(u8, app.notice_body.items, "Credits are not available") != null);
 }
 
 test "app_commands routes clear through carry-forward session reset" {

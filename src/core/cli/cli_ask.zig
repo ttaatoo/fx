@@ -48,6 +48,7 @@ const sandbox = @import("../permissions/sandbox.zig");
 const session_runtime = @import("../session/session.zig");
 const session_codec = @import("../session/session_codec.zig");
 const session_usage = @import("../session/session_usage.zig");
+const generation_usage_provider = @import("../session/generation_usage_provider.zig");
 const usage_report = @import("../session/usage_report.zig");
 const session_store = @import("../session/session_store.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
@@ -271,10 +272,6 @@ fn runAskChild(
         .host = ctx.subagent_host orelse return error.ProviderFailed,
         .tool_context = ctx.toolContext(),
         .provider_routes = .{
-            .gateway = .{
-                .agent_stream_provider = ctx.cfg.gateway_provider.agent_stream,
-                .permission_reviewer_provider = ctx.cfg.permission_reviewer_provider,
-            },
             .codex = .{
                 .agent_stream_provider = ctx.cfg.codex_agent_stream orelse agent_stream_provider.unavailable_provider,
                 .permission_reviewer_provider = ctx.cfg.codex_permission_reviewer_provider,
@@ -524,7 +521,7 @@ const AskContext = struct {
     gateway_team: ?[]const u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     model_catalog_access: credentials.CatalogAccess = .{ .public_only = .no_credential },
     model: []const u8 = "",
     agent_step_limit: usize = 0,
@@ -599,10 +596,10 @@ const AskContext = struct {
             .mode_id = cfg.mode_registry.default_mode_id,
             .session = session_runtime.SessionRuntime.init(
                 cfg.max_history_turns,
-                cfg.gateway_provider.generation_usage,
+                generation_usage_provider.unavailable_provider,
             ),
             .web_search_runtime = web_search_runtime.Runtime.init(.{
-                .provider = cfg.gateway_provider.web_search,
+                .provider = null,
             }),
             .background = BackgroundRuntime.init(
                 cfg.background_process_provider,
@@ -942,7 +939,7 @@ const AskContext = struct {
     }
 
     fn toolContext(self: *AskContext) tool_runtime.Context {
-        const gateway_features_allowed = model_provider.usesGatewayAuxiliaries(self.provider);
+        const gateway_features_allowed = false;
         if (gateway_features_allowed) {
             self.web_search_runtime.configure(.{
                 .api_key = self.api_key,
@@ -1059,7 +1056,6 @@ const AskContext = struct {
     fn admissionAutoClassifier(self: *AskContext) permission_auto_classifier.Classifier {
         if (self.auto_classifier.enabled()) return self.auto_classifier;
         const provider = switch (self.provider) {
-            .gateway => self.cfg.permission_reviewer_provider,
             .codex => self.cfg.codex_permission_reviewer_provider,
             .anthropic, .xai => null,
         } orelse
@@ -1076,7 +1072,6 @@ const AskContext = struct {
 
     fn agentStreamProvider(self: *const AskContext) agent_stream_provider.Provider {
         return switch (self.provider) {
-            .gateway => agent_stream_provider.unavailable_provider,
             .codex => self.cfg.codex_agent_stream orelse agent_stream_provider.unavailable_provider,
             .anthropic, .xai => @import("../../gateway/direct_provider.zig").agent_stream_provider,
         };
@@ -3965,7 +3960,7 @@ fn testProcessQueuedPromptChecksTimeout(deps: *const agent_runtime.AgentRuntimeD
     try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
     try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
     try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
-    try std.testing.expect(ctx.web_search_runtime.provider.?.execute_fn == ctx.cfg.gateway_provider.web_search.execute_fn);
+    try std.testing.expect(ctx.web_search_runtime.provider == null);
     try std.testing.expectEqualStrings("/models", tool_ctx.gateway_models_path);
     try std.testing.expect(tool_ctx.devbox_provider.?.execute_fn == unavailableDevboxForTest);
     try testPushAssistantText(deps, "assistant text");

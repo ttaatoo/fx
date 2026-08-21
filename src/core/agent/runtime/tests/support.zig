@@ -8,8 +8,7 @@ const permissions = @import("../../../permissions/permissions.zig");
 const worker_runtime = @import("../../worker_runtime.zig");
 const background_runtime = @import("../../../background/background_runtime.zig");
 const builtin_context = @import("../../../../builtins/context.zig");
-const builtin_gateway = @import("../../../../builtins/gateway.zig");
-const gateway_client = @import("../../../../gateway/client.zig");
+const gateway_client = @import("../../../../gateway/http.zig");
 const builtin_tools = @import("../../../../builtins/tools.zig");
 const session_runtime = @import("../../../session/session.zig");
 const session_codec = @import("../../../session/session_codec.zig");
@@ -262,10 +261,11 @@ pub const FakeGateway = struct {
     }
 
     pub fn provider(self: *FakeGateway) agent_stream_provider.Provider {
-        var result = builtin_gateway.agent_stream_provider;
-        result.context = self;
-        result.stream_fn = fakeGatewayStream;
-        return result;
+        return .{
+            .context = self,
+            .build_fn = fakeGatewayBuild,
+            .stream_fn = fakeGatewayStream,
+        };
     }
 
     fn stream(
@@ -355,7 +355,7 @@ pub const FakeGateway = struct {
                     completion.finish_reason orelse if (completion.tool_calls.len > 0) .tool_calls else .stop,
                 .usage = completion.usage,
             },
-            .generation_origin = "https://ai-gateway.vercel.sh",
+            .generation_origin = "https://cli-chat-proxy.grok.com/v1",
         };
     }
 
@@ -374,6 +374,30 @@ pub const ModelCapabilityOverride = struct {
     model: []const u8,
     capabilities: model_capabilities.Capabilities,
 };
+
+fn fakeGatewayBuild(
+    _: ?*anyopaque,
+    alloc: Allocator,
+    request: agent_stream_provider.BuildRequest,
+) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    try out.writer.writeAll("{\"model\":");
+    try std.json.Stringify.value(request.model, .{}, &out.writer);
+    try out.writer.writeAll(",\"tools\":");
+    try out.writer.writeAll(request.serialized_tools);
+    try out.writer.writeAll(",\"messages\":[");
+    for (request.messages, 0..) |message, i| {
+        if (i > 0) try out.writer.writeByte(',');
+        try out.writer.writeAll("{\"role\":\"");
+        try out.writer.writeAll(@tagName(message.role));
+        try out.writer.writeAll("\",\"content\":");
+        try std.json.Stringify.value(message.content orelse "", .{}, &out.writer);
+        try out.writer.writeByte('}');
+    }
+    try out.writer.writeAll("]}");
+    return out.toOwnedSlice();
+}
 
 fn fakeGatewayStream(
     context: ?*anyopaque,

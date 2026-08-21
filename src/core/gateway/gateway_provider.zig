@@ -1,12 +1,8 @@
 const std = @import("std");
-const agent_stream_provider = @import("../agent/stream_provider.zig");
 const credentials = @import("../auth/credentials.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const generation_usage_provider = @import("../session/generation_usage_provider.zig");
-const output_contracts = @import("../output/output_contracts.zig");
-const web_search_provider = @import("../tooling/web_search_provider.zig");
 const model_catalog = @import("model_catalog.zig");
 const model_catalog_metadata = @import("model_catalog_metadata.zig");
 
@@ -59,81 +55,11 @@ pub const CliModelCatalogProvider = struct {
     }
 };
 
-pub const CreditsLookupInput = struct {
-    credential: ?[]const u8,
-    credential_source: ?credentials.Source = null,
-    tenant: ?[]const u8,
-};
-
-pub const FetchCreditsFn = *const fn (
-    ?*anyopaque,
-    Allocator,
-    CreditsLookupInput,
-) output_contracts.CreditsSnapshot;
-
-pub const CreditsProvider = struct {
-    /// When set, context must remain valid until every in-flight `fetch` returns.
-    context: ?*anyopaque = null,
-    fetch_fn: FetchCreditsFn,
-
-    /// The returned snapshot owns its populated provider fields. The caller
-    /// must call `CreditsSnapshot.deinit`.
-    pub fn fetch(
-        self: CreditsProvider,
-        alloc: Allocator,
-        input: CreditsLookupInput,
-    ) output_contracts.CreditsSnapshot {
-        return self.fetch_fn(self.context, alloc, input);
-    }
-};
-
 pub const Provider = struct {
-    agent_stream: agent_stream_provider.Provider,
     oauth_transport: oauth_transport.Provider,
-    chat_url: ChatUrlProvider,
     cli_model_catalog: CliModelCatalogProvider,
-    credits: CreditsProvider,
-    generation_usage: generation_usage_provider.Provider,
-    web_search: web_search_provider.Provider,
     model_catalog: model_catalog.Provider,
 };
-
-test "credits lookup dispatches through the injected provider" {
-    const Fake = struct {
-        calls: usize = 0,
-        saw_expected_input: bool = false,
-
-        fn fetch(
-            raw: ?*anyopaque,
-            alloc: Allocator,
-            input: CreditsLookupInput,
-        ) output_contracts.CreditsSnapshot {
-            const self: *@This() = @ptrCast(@alignCast(raw.?));
-            self.calls += 1;
-            self.saw_expected_input =
-                std.mem.eql(u8, input.credential orelse "", "credential") and
-                std.mem.eql(u8, input.tenant orelse "", "tenant");
-            return .{
-                .balance = alloc.dupe(u8, "10") catch null,
-            };
-        }
-    };
-
-    var fake: Fake = .{};
-    const provider = CreditsProvider{
-        .context = &fake,
-        .fetch_fn = Fake.fetch,
-    };
-    var snapshot = provider.fetch(std.testing.allocator, .{
-        .credential = "credential",
-        .tenant = "tenant",
-    });
-    defer snapshot.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), fake.calls);
-    try std.testing.expect(fake.saw_expected_input);
-    try std.testing.expectEqualStrings("10", snapshot.balance.?);
-}
 
 const CapabilityResolverState = enum {
     idle,
@@ -398,7 +324,7 @@ test "capability resolver uses provider catalog metadata" {
         std.testing.allocator,
         fake.provider(),
         .{
-            .access = credentials.catalogAccessForCredential(.ai_gateway_api_key, "test-key", "team_123"),
+            .access = credentials.catalogAccessForCredential(.custom_provider, "test-key", null),
             .endpoint = "/v1/models",
             .cancel_flag = &cancel_flag,
         },
@@ -432,7 +358,7 @@ test "capability resolver retries rejected authenticated catalog access anonymou
         std.testing.allocator,
         fake.provider(),
         .{
-            .access = credentials.catalogAccessForCredential(.ai_gateway_api_key, "test-key", "team_123"),
+            .access = credentials.catalogAccessForCredential(.custom_provider, "test-key", null),
             .endpoint = "/v1/models",
         },
         "provider/model",

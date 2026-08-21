@@ -2768,24 +2768,13 @@ fn executeActionBoundPermissionRequest(
 }
 
 fn visionFallbackMode(
-    provider: model_provider.ProviderId,
-    tool_registered: bool,
+    _: model_provider.ProviderId,
+    _: bool,
 ) runtime_gateway_step.VisionToolMode {
-    if (!model_provider.usesGatewayAuxiliaries(provider) or !tool_registered) {
-        return .unavailable;
-    }
-    return .optional;
+    return .unavailable;
 }
 
-test "vision fallback is available only through retired Gateway" {
-    try std.testing.expectEqual(
-        runtime_gateway_step.VisionToolMode.optional,
-        visionFallbackMode(.gateway, true),
-    );
-    try std.testing.expectEqual(
-        runtime_gateway_step.VisionToolMode.unavailable,
-        visionFallbackMode(.gateway, false),
-    );
+test "vision fallback stays unavailable without Gateway auxiliaries" {
     try std.testing.expectEqual(
         runtime_gateway_step.VisionToolMode.unavailable,
         visionFallbackMode(.codex, true),
@@ -3168,7 +3157,7 @@ fn processQueuedPromptLoop(
                         current_user_message_index,
                     );
                 }
-                if (!model_provider.usesGatewayAuxiliaries(job.provider)) {
+                if (!false) {
                     return error.CodexNativeImageUnavailable;
                 }
                 if (job.authorized_image_catalog.len == 0) {

@@ -452,6 +452,14 @@ const VisionProviderScript = struct {
     }
 };
 
+fn unusedVisionBuild(
+    _: ?*anyopaque,
+    alloc: Allocator,
+    _: agent_stream_provider.BuildRequest,
+) anyerror![]u8 {
+    return alloc.dupe(u8, "{}");
+}
+
 fn runScriptedVision(
     alloc: Allocator,
     script: *VisionProviderScript,
@@ -459,9 +467,11 @@ fn runScriptedVision(
     args_json: []const u8,
     output_limit_bytes: usize,
 ) !runtime_tool_contracts.ToolExecutionResult {
-    var provider = @import("../../../../builtins/gateway.zig").agent_stream_provider;
-    provider.context = script;
-    provider.stream_fn = VisionProviderScript.stream;
+    const provider = agent_stream_provider.Provider{
+        .context = script,
+        .build_fn = unusedVisionBuild,
+        .stream_fn = VisionProviderScript.stream,
+    };
     return vision_executor.execute(alloc, args_json, catalog, .{
         .stream_provider = provider,
         .api_key = "key",

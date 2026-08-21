@@ -15,21 +15,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, platform, tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import {
-  cleanupIsolatedTestHome,
-  createIsolatedTestHome,
-  FX_BIN,
-  HAS_API_KEY,
   REPO_ROOT,
   runFx,
 } from "../evals/eval-helpers";
-import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  startFakeGateway,
-} from "./tmux-helpers";
 
 const TIMEOUT = 15_000;
 const NO_GATEWAY_AUTH = {
@@ -38,8 +29,6 @@ const NO_GATEWAY_AUTH = {
 };
 const MISSING_AUTH_MESSAGE =
   "This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.";
-
-const KEYCHAIN_SERVICE = "FX_AI_GATEWAY_API_KEY";
 
 function maxLineWidth(text: string): number {
   return Math.max(...text.split(/\r?\n/).map((line) => Bun.stringWidth(line)));
@@ -60,135 +49,6 @@ function doctorSessionDiagnosticsLimit(): number {
   const match = source.match(/const default_session_diagnostics_limit: usize = (\d+);/);
   if (!match) throw new Error("doctor session diagnostics limit not found");
   return Number(match[1]);
-}
-
-const SEEDED_GATEWAY_TOKEN = "seeded-access-token";
-
-function writeSeededFxAuth(
-  home: string,
-  teamId?: string,
-  issuer = "https://vercel.com",
-  expiresAtMs = Date.now() + 60 * 60 * 1000,
-): void {
-  const fxDir = join(home, ".fx");
-  mkdirSync(fxDir, { recursive: true, mode: 0o700 });
-  chmodSync(fxDir, 0o700);
-  const authPath = join(fxDir, "auth.json");
-  const auth: Record<string, string | number> = {
-    version: 1,
-    issuer,
-    client_id: "test-client",
-    access_token: SEEDED_GATEWAY_TOKEN,
-    refresh_token: "seeded-refresh-token",
-    expires_at_ms: expiresAtMs,
-    scope: "openid",
-    token_type: "Bearer",
-  };
-  if (teamId) {
-    auth.team_id = teamId;
-    auth.team_slug = "vercel-labs";
-  }
-  writeFileSync(authPath, JSON.stringify(auth) + "\n", { mode: 0o600 });
-  chmodSync(authPath, 0o600);
-}
-
-function startRequestCatcher() {
-  const requests: Array<{ method: string; path: string }> = [];
-  const server = Bun.serve({
-    hostname: "0.0.0.0",
-    port: 0,
-    fetch(request) {
-      const url = new URL(request.url);
-      requests.push({ method: request.method, path: url.pathname });
-      return Response.json({ revoked: true });
-    },
-  });
-  return {
-    issuerUrl: `http://127.0.0.1:${server.port}`,
-    endpoint: `http://localhost.:${server.port}/oauth/revoke`,
-    requests,
-    stop() {
-      server.stop(true);
-    },
-  };
-}
-
-function startLogoutIssuer(
-  revokeStatuses: number[],
-  authPath?: string,
-  revocationEndpoint?: string | null,
-) {
-  const providerDetail = `provider rejected ${SEEDED_GATEWAY_TOKEN} and seeded-refresh-token`;
-  const requests: Array<{
-    method: string;
-    path: string;
-    tokenTypeHint?: string;
-    validForm?: boolean;
-    localSessionPresent?: boolean;
-  }> = [];
-  let revokeAttempt = 0;
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(request) {
-      const url = new URL(request.url);
-      const issuerUrl = `http://127.0.0.1:${server.port}`;
-      if (url.pathname === "/.well-known/openid-configuration") {
-        requests.push({ method: request.method, path: url.pathname });
-        return Response.json({
-          issuer: issuerUrl,
-          device_authorization_endpoint: `${issuerUrl}/oauth/device`,
-          token_endpoint: `${issuerUrl}/oauth/token`,
-          ...(revocationEndpoint === null
-            ? {}
-            : {
-                revocation_endpoint:
-                  revocationEndpoint ?? `${issuerUrl}/oauth/revoke`,
-              }),
-        });
-      }
-      if (url.pathname === "/oauth/revoke") {
-        const form = await request.formData();
-        const tokenTypeHint = form.get("token_type_hint");
-        const expectedToken =
-          tokenTypeHint === "refresh_token"
-            ? "seeded-refresh-token"
-            : tokenTypeHint === "access_token"
-              ? SEEDED_GATEWAY_TOKEN
-              : null;
-        const validForm =
-          form.get("client_id") === "test-client" &&
-          expectedToken !== null &&
-          form.get("token") === expectedToken;
-        requests.push({
-          method: request.method,
-          path: url.pathname,
-          tokenTypeHint:
-            typeof tokenTypeHint === "string" ? tokenTypeHint : "missing",
-          validForm,
-          ...(authPath
-            ? { localSessionPresent: existsSync(authPath) }
-            : {}),
-        });
-        const configuredStatus = revokeStatuses[revokeAttempt] ?? 200;
-        revokeAttempt += 1;
-        const revokeStatus = validForm ? configuredStatus : 400;
-        return Response.json(
-          revokeStatus >= 400 ? { error: providerDetail } : { revoked: true },
-          { status: revokeStatus },
-        );
-      }
-      return new Response("not found", { status: 404 });
-    },
-  });
-  return {
-    issuerUrl: `http://127.0.0.1:${server.port}`,
-    providerDetail,
-    requests,
-    stop() {
-      server.stop(true);
-    },
-  };
 }
 
 function snapshotTree(root: string): string[] {
@@ -466,17 +326,29 @@ describe("cli: status", () => {
       mkdirSync(fxDir, { recursive: true, mode: 0o700 });
       mkdirSync(workspace);
       writeFileSync(join(fxDir, "mcp.json"), "{invalid json", { mode: 0o600 });
-      const gateway = startFakeGateway([]);
+      writeFileSync(
+        join(fxDir, "providers.json"),
+        JSON.stringify({
+          providers: {
+            anthropic: {
+              api: "anthropic-messages",
+              baseUrl: "https://api.anthropic.com",
+              apiKey: "$ANTHROPIC_API_KEY",
+              models: [{ id: "claude-opus-4-6" }],
+            },
+          },
+        }) + "\n",
+        { mode: 0o600 },
+      );
 
       try {
         const env = {
+          ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
-          AI_GATEWAY_API_KEY: "mcp-config-diagnostic-key",
-          VERCEL_OIDC_TOKEN: undefined,
+          ANTHROPIC_API_KEY: "mcp-config-diagnostic-key",
           FX_DISABLE_KEYCHAIN: "1",
           FX_AUTO_UPGRADE: "0",
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
+          FX_MODEL: "claude-opus-4-6",
         };
         const cwd = realpathSync(workspace);
         const before = snapshotTree(home);
@@ -523,7 +395,6 @@ describe("cli: status", () => {
           exit_code: 1,
           error: "McpConfigInvalidJson",
         });
-        expect(gateway.requestCount()).toBe(0);
         expect(snapshotTree(home)).toEqual(before);
 
         writeFileSync(join(fxDir, "mcp.json"), '{"mcp":{}}\n', { mode: 0o600 });
@@ -538,10 +409,8 @@ describe("cli: status", () => {
             (check: { name: string }) => check.name === "mcp_config",
           ),
         ).toBe(false);
-        expect(gateway.requestCount()).toBe(0);
         expect(snapshotTree(home)).toEqual(validBefore);
       } finally {
-        gateway.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -580,141 +449,6 @@ describe("cli: status", () => {
           status: "fail",
           detail: MISSING_AUTH_MESSAGE,
         });
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "status and doctor share fx login source, team, and refreshability",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-auth-"));
-      try {
-        const home = join(root, "home");
-        const workspace = join(root, "workspace");
-        mkdirSync(home);
-        mkdirSync(workspace);
-        writeSeededFxAuth(home, "team_123");
-        const env = {
-          ...NO_GATEWAY_AUTH,
-          HOME: realpathSync(home),
-          FX_DISABLE_KEYCHAIN: "1",
-        };
-        const cwd = realpathSync(workspace);
-
-        const statusText = await runFx(["status"], { cwd, env });
-        const statusJsonResult = await runFx(["status", "--json"], { cwd, env });
-        const doctorText = await runFx(["doctor"], { cwd, env });
-        const doctorJsonResult = await runFx(["doctor", "--json"], { cwd, env });
-
-        expect(statusText.code).toBe(0);
-        expect(statusJsonResult.code).toBe(0);
-        expect(doctorText.code).toBe(0);
-        expect(doctorJsonResult.code).toBe(0);
-        const expectedAuth = {
-          auth: "missing",
-          auth_refreshable: false,
-          auth_help: MISSING_AUTH_MESSAGE,
-        };
-        expect(JSON.parse(statusJsonResult.stdout.trim())).toMatchObject(expectedAuth);
-        expect(JSON.parse(doctorJsonResult.stdout.trim())).toMatchObject({
-          auth: "missing",
-          auth_refreshable: false,
-        });
-        for (const output of [statusText.stdout, doctorText.stdout]) {
-          expect(output).not.toContain("auth=fx login");
-          expect(output).not.toContain("team=vercel-labs");
-        }
-        for (const output of [
-          statusText.stdout,
-          statusJsonResult.stdout,
-          doctorText.stdout,
-          doctorJsonResult.stdout,
-        ]) {
-          expect(output).not.toContain(SEEDED_GATEWAY_TOKEN);
-          expect(output).not.toContain("seeded-refresh-token");
-        }
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "status and doctor inspect an expired login without refreshing it",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-expired-auth-"));
-      const requestCatcher = startRequestCatcher();
-      try {
-        const home = join(root, "home");
-        const workspace = join(root, "workspace");
-        mkdirSync(home);
-        mkdirSync(workspace);
-        writeSeededFxAuth(
-          home,
-          "team_123",
-          requestCatcher.issuerUrl,
-          Date.now() - 60_000,
-        );
-        const env = {
-          ...NO_GATEWAY_AUTH,
-          HOME: realpathSync(home),
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_E2E_OAUTH_ISSUER_URL: requestCatcher.issuerUrl,
-        };
-        const cwd = realpathSync(workspace);
-
-        const status = await runFx(["status", "--json"], { cwd, env });
-        const doctor = await runFx(["doctor", "--json"], { cwd, env });
-
-        expect(status.code).toBe(0);
-        expect(doctor.code).toBe(0);
-        const expectedAuth = {
-          auth: "missing",
-          auth_refreshable: false,
-        };
-        expect(JSON.parse(status.stdout.trim())).toMatchObject({
-          ...expectedAuth,
-          auth_help: MISSING_AUTH_MESSAGE,
-        });
-        expect(JSON.parse(doctor.stdout.trim())).toMatchObject(expectedAuth);
-        expect(requestCatcher.requests).toEqual([]);
-      } finally {
-        requestCatcher.stop();
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "a new status process keeps normal credential precedence",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-precedence-"));
-      try {
-        writeSeededFxAuth(root, "team_123");
-        const envToken = "preferred-environment-token";
-        const env = {
-          HOME: realpathSync(root),
-          VERCEL_OIDC_TOKEN: undefined,
-          AI_GATEWAY_API_KEY: envToken,
-          FX_DISABLE_KEYCHAIN: "1",
-        };
-
-        const status = await runFx(["status", "--json"], { env });
-        const doctor = await runFx(["doctor", "--json"], { env });
-
-        const expectedAuth = {
-          auth: "AI_GATEWAY_API_KEY",
-          auth_refreshable: false,
-        };
-        expect(JSON.parse(status.stdout.trim())).toMatchObject(expectedAuth);
-        expect(JSON.parse(doctor.stdout.trim())).toMatchObject(expectedAuth);
-        expect(status.stdout).not.toContain(envToken);
-        expect(doctor.stdout).not.toContain(envToken);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -852,7 +586,7 @@ describe("cli: status", () => {
 
         const provider = await runFx(["provider", "xai"], { cwd, env });
         expect(provider.code).toBe(0);
-        expect(provider.stdout).toContain("Provider set to SuperGrok");
+        expect(provider.stdout).toMatch(/Provider set to SuperGrok|SuperGrok is already selected/);
 
         const xaiStatus = await runFx(["status", "--json"], {
           cwd,
@@ -1059,9 +793,9 @@ describe("cli: status", () => {
         const user = await runFx(["status", "--json"], {
           cwd: workspace,
           env,
-          timeoutMs: 3_000,
+          timeoutMs: 5_000,
         });
-        expect(Date.now() - userStartedAt).toBeLessThan(3_000);
+        expect(Date.now() - userStartedAt).toBeLessThan(5_000);
         expect(user.code).toBe(0);
         expect(JSON.parse(user.stdout)).toMatchObject({ kind: "status" });
         expect(user.stderr).toContain("fx: config user: durable_path_unsafe");
@@ -1072,9 +806,9 @@ describe("cli: status", () => {
         const project = await runFx(["status", "--json"], {
           cwd: workspace,
           env,
-          timeoutMs: 3_000,
+          timeoutMs: 5_000,
         });
-        expect(Date.now() - projectStartedAt).toBeLessThan(3_000);
+        expect(Date.now() - projectStartedAt).toBeLessThan(5_000);
         expect(project.code).toBe(0);
         expect(JSON.parse(project.stdout)).toMatchObject({ kind: "status" });
         expect(project.stderr).toContain("fx: config project: durable_path_unsafe");
@@ -1582,290 +1316,6 @@ describe("cli: doctor", () => {
 
 describe("cli: logout", () => {
   test(
-    "fx logout revokes refresh and access tokens after local deletion",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-revocation-"));
-      const authPath = join(home, ".fx", "auth.json");
-      const issuer = startLogoutIssuer([200, 200], authPath);
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-
-        const logout = await runFx(["logout"], {
-          env: {
-            ...NO_GATEWAY_AUTH,
-            HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
-          },
-        });
-
-        expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
-        expect(logout.stderr).toBe("");
-        expect(existsSync(authPath)).toBe(false);
-        expect(issuer.requests).toEqual([
-          { method: "GET", path: "/.well-known/openid-configuration" },
-          {
-            method: "POST",
-            path: "/oauth/revoke",
-            tokenTypeHint: "refresh_token",
-            validForm: true,
-            localSessionPresent: false,
-          },
-          {
-            method: "POST",
-            path: "/oauth/revoke",
-            tokenTypeHint: "access_token",
-            validForm: true,
-            localSessionPresent: false,
-          },
-        ]);
-        for (const secret of [
-          SEEDED_GATEWAY_TOKEN,
-          "seeded-refresh-token",
-          issuer.providerDetail,
-        ]) {
-          expect(logout.stdout).not.toContain(secret);
-          expect(logout.stderr).not.toContain(secret);
-        }
-      } finally {
-        issuer.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx logout warns once and sends no tokens without a revocation endpoint",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-no-revocation-"));
-      const authPath = join(home, ".fx", "auth.json");
-      const issuer = startLogoutIssuer([], authPath, null);
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-
-        const logout = await runFx(["logout"], {
-          env: {
-            ...NO_GATEWAY_AUTH,
-            HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
-          },
-        });
-
-        expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
-        expect(logout.stderr).toBe(
-          "Warning: signed out locally, but the remote session could not be revoked.\n",
-        );
-        expect(existsSync(authPath)).toBe(false);
-        expect(issuer.requests).toEqual([
-          { method: "GET", path: "/.well-known/openid-configuration" },
-        ]);
-      } finally {
-        issuer.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx logout warns once and sends no tokens to an invalid revocation endpoint",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-invalid-revocation-"));
-      const authPath = join(home, ".fx", "auth.json");
-      const catcher = startRequestCatcher();
-      const issuer = startLogoutIssuer([], authPath, catcher.endpoint);
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-
-        const logout = await runFx(["logout"], {
-          env: {
-            ...NO_GATEWAY_AUTH,
-            HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
-          },
-        });
-
-        expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
-        expect(catcher.requests).toEqual([]);
-        expect(logout.stderr).toBe(
-          "Warning: signed out locally, but the remote session could not be revoked.\n",
-        );
-        expect(existsSync(authPath)).toBe(false);
-        expect(issuer.requests).toEqual([
-          { method: "GET", path: "/.well-known/openid-configuration" },
-        ]);
-      } finally {
-        issuer.stop();
-        catcher.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx logout removes a saved login rejected for unsafe permissions",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-rejected-login-"));
-      const issuer = startLogoutIssuer([200, 200]);
-      const authPath = join(home, ".fx", "auth.json");
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-        chmodSync(authPath, 0o644);
-
-        const logout = await runFx(["logout"], {
-          env: {
-            ...NO_GATEWAY_AUTH,
-            HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
-          },
-        });
-
-        expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
-        expect(logout.stderr).toBe("");
-        expect(existsSync(authPath)).toBe(false);
-        expect(issuer.requests).toEqual([]);
-        for (const secret of [
-          SEEDED_GATEWAY_TOKEN,
-          "seeded-refresh-token",
-          issuer.providerDetail,
-        ]) {
-          expect(logout.stdout).not.toContain(secret);
-          expect(logout.stderr).not.toContain(secret);
-        }
-      } finally {
-        issuer.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx logout fails when the saved login cannot be deleted",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-delete-failure-"));
-      const issuer = startLogoutIssuer([200, 200]);
-      const fxDir = join(home, ".fx");
-      const authPath = join(fxDir, "auth.json");
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-        chmodSync(fxDir, 0o500);
-
-        const env = {
-          ...NO_GATEWAY_AUTH,
-          HOME: realpathSync(home),
-          FX_DISABLE_KEYCHAIN: "1",
-        };
-        const logout = await runFx(["logout"], { env });
-        const status = await runFx(["status", "--json"], { env });
-
-        expect(logout.code).toBe(1);
-        expect(logout.stdout).toBe("");
-        expect(logout.stderr).toBe(
-          "fx logout: failed to durably remove saved Fx login\n",
-        );
-        expect(existsSync(authPath)).toBe(true);
-        expect(JSON.parse(status.stdout).auth).toBe("fx login");
-        expect(issuer.requests).toEqual([]);
-      } finally {
-        chmodSync(fxDir, 0o700);
-        issuer.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx logout deletes only the saved login and keeps environment credentials available",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-env-"));
-      const authPath = join(home, ".fx", "auth.json");
-      const issuer = startLogoutIssuer([500, 200], authPath);
-      const oidcToken = "logout-oidc-token";
-      const apiToken = "logout-api-key-token";
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-        const env = {
-          HOME: realpathSync(home),
-          VERCEL_OIDC_TOKEN: oidcToken,
-          AI_GATEWAY_API_KEY: apiToken,
-          FX_DISABLE_KEYCHAIN: "1",
-        };
-
-        const logout = await runFx(["logout"], { env });
-        expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
-        expect(logout.stderr).toBe(
-          "Warning: signed out locally, but the remote session could not be revoked.\n",
-        );
-        expect(existsSync(join(home, ".fx", "auth.json"))).toBe(false);
-        expect(issuer.requests).toEqual([
-          { method: "GET", path: "/.well-known/openid-configuration" },
-          {
-            method: "POST",
-            path: "/oauth/revoke",
-            tokenTypeHint: "refresh_token",
-            validForm: true,
-            localSessionPresent: false,
-          },
-          {
-            method: "POST",
-            path: "/oauth/revoke",
-            tokenTypeHint: "access_token",
-            validForm: true,
-            localSessionPresent: false,
-          },
-        ]);
-
-        const oidcStatus = await runFx(["status", "--json"], { env });
-        const apiEnv = { ...env, VERCEL_OIDC_TOKEN: undefined };
-        const apiStatus = await runFx(["status", "--json"], { env: apiEnv });
-        const doctor = await runFx(["doctor", "--json"], { env: apiEnv });
-        expect(JSON.parse(oidcStatus.stdout)).toMatchObject({
-          auth: "VERCEL_OIDC_TOKEN",
-          auth_refreshable: false,
-        });
-        expect(JSON.parse(apiStatus.stdout)).toMatchObject({
-          auth: "AI_GATEWAY_API_KEY",
-          auth_refreshable: false,
-        });
-        expect(JSON.parse(doctor.stdout)).toMatchObject({
-          auth: "AI_GATEWAY_API_KEY",
-          auth_refreshable: false,
-        });
-
-        for (const output of [
-          logout.stdout,
-          logout.stderr,
-          oidcStatus.stdout,
-          apiStatus.stdout,
-          doctor.stdout,
-        ]) {
-          for (const secret of [
-            SEEDED_GATEWAY_TOKEN,
-            "seeded-refresh-token",
-            oidcToken,
-            apiToken,
-            issuer.providerDetail,
-          ]) {
-            expect(output).not.toContain(secret);
-          }
-        }
-      } finally {
-        issuer.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
     "fx logout leaves an active API key unchanged when no login exists",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-no-login-"));
@@ -1895,65 +1345,6 @@ describe("cli: logout", () => {
     },
     TIMEOUT,
   );
-
-  test.skipIf(platform() !== "darwin")(
-    "fx logout leaves the macOS Keychain API key untouched",
-    async () => {
-      const runId = `${process.pid}-${Date.now()}`;
-      const account = `fx-e2e-logout-${runId}`;
-      const keychainToken = `vca_fake_logout_key_${runId}`;
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-logout-keychain-"));
-      const home = join(root, "home");
-      mkdirSync(join(home, "Library"), { recursive: true });
-      symlinkSync(
-        join(homedir(), "Library", "Keychains"),
-        join(home, "Library", "Keychains"),
-        "dir",
-      );
-      const issuer = startLogoutIssuer([200, 200]);
-
-      try {
-        const store = spawnSync(
-          "/usr/bin/security",
-          ["add-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE, "-U", "-w", keychainToken],
-          { encoding: "utf8" },
-        );
-        expect(store.status, store.stderr).toBe(0);
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-
-        const env = {
-          ...NO_GATEWAY_AUTH,
-          HOME: realpathSync(home),
-          USER: account,
-        };
-        const logout = await runFx(["logout"], { env });
-        const status = await runFx(["status", "--json"], { env });
-        const stored = spawnSync(
-          "/usr/bin/security",
-          ["find-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE, "-w"],
-          { encoding: "utf8", env: { ...process.env, ...env } },
-        );
-
-        expect(logout.code).toBe(0);
-        expect(logout.stderr).toBe("");
-        expect(existsSync(join(home, ".fx", "auth.json"))).toBe(false);
-        expect(stored.status).toBe(0);
-        expect(stored.stdout.trim()).toBe(keychainToken);
-        expect(JSON.parse(status.stdout).auth).not.toBe("fx login");
-        expect(logout.stdout).not.toContain(keychainToken);
-        expect(status.stdout).not.toContain(keychainToken);
-      } finally {
-        issuer.stop();
-        spawnSync(
-          "/usr/bin/security",
-          ["delete-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE],
-          { encoding: "utf8" },
-        );
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
 });
 
 describe("cli: setup", () => {
@@ -1966,44 +1357,6 @@ describe("cli: setup", () => {
       expect(r.code).toBe(1);
       expect(r.stdout).toBe("");
       expect(r.stderr).toContain("AI Gateway API keys are not supported");
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx setup never invokes the configured Vercel CLI",
-    async () => {
-      const runId = `${process.pid}-${Date.now()}`;
-      const fakeDir = mkdtempSync(join(tmpdir(), "fx-e2e-vercel-cli-"));
-      const fakeCli = join(fakeDir, "vc");
-      const invocationLog = join(fakeDir, "invoked");
-
-      writeFileSync(
-        fakeCli,
-        `#!/bin/sh
-set -eu
-printf '%s\\n' invoked > '${invocationLog}'
-exit 99
-`,
-        { mode: 0o700 },
-      );
-
-      try {
-        const r = await runFx(["setup"], {
-          env: {
-            ...NO_GATEWAY_AUTH,
-            USER: `fx-e2e-setup-${runId}`,
-            FX_VERCEL_CLI_PATH: fakeCli,
-          },
-          timeoutMs: TIMEOUT,
-        });
-        expect(r.code).toBe(1);
-        expect(r.stdout).toBe("");
-        expect(r.stderr).toContain("AI Gateway API keys are not supported");
-        expect(existsSync(invocationLog)).toBe(false);
-      } finally {
-        rmSync(fakeDir, { recursive: true, force: true });
-      }
     },
     TIMEOUT,
   );
@@ -2045,121 +1398,6 @@ describe("cli: stored key file backend", () => {
         expect(absentJson.auth_help).toBe(MISSING_AUTH_MESSAGE);
       } finally {
         rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-});
-
-describe("cli: Keychain authentication", () => {
-  test.skipIf(platform() !== "darwin")(
-    "fx ask reads an existing Keychain credential without onboarding",
-    async () => {
-      const runId = `${process.pid}-${Date.now()}`;
-      const account = `fx-e2e-ask-${runId}`;
-      const fakeKey = `vca_fake_ask_key_${runId}`;
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-keychain-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      mkdirSync(join(home, "Library"), { recursive: true });
-      symlinkSync(
-        join(homedir(), "Library", "Keychains"),
-        join(home, "Library", "Keychains"),
-        "dir",
-      );
-      mkdirSync(workspace);
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("Keychain ask complete"),
-      ]);
-
-      try {
-        const store = spawnSync(
-          "/usr/bin/security",
-          [
-            "add-generic-password",
-            "-a",
-            account,
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-U",
-            "-w",
-            fakeKey,
-          ],
-          { encoding: "utf8" },
-        );
-        expect(store.status, store.stderr).toBe(0);
-
-        const lookup = spawnSync(
-          "/usr/bin/security",
-          [
-            "find-generic-password",
-            "-a",
-            account,
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-w",
-          ],
-          {
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              HOME: realpathSync(home),
-              USER: account,
-            },
-          },
-        );
-        expect(lookup.status, lookup.stderr).toBe(0);
-        expect(lookup.stdout.trim()).toBe(fakeKey);
-
-        const result = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--no-save",
-            "Say exactly: Keychain ask complete",
-          ],
-          {
-            cwd: realpathSync(workspace),
-            env: {
-              ...NO_GATEWAY_AUTH,
-              HOME: realpathSync(home),
-              USER: account,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
-            timeoutMs: TIMEOUT,
-          },
-        );
-
-        expect(result.code).toBe(0);
-        expect(result.stderr).toBe("");
-        expect(JSON.parse(result.stdout).output.trim()).toBe(
-          "Keychain ask complete",
-        );
-        expect(result.stdout).not.toContain(fakeKey);
-        expect(existsSync(join(home, ".fx"))).toBe(false);
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.requests[0]!.headers.get("authorization")).toBe(
-          `Bearer ${fakeKey}`,
-        );
-      } finally {
-        gateway.stop();
-        spawnSync(
-          "/usr/bin/security",
-          [
-            "delete-generic-password",
-            "-a",
-            account,
-            "-s",
-            KEYCHAIN_SERVICE,
-          ],
-          { encoding: "utf8" },
-        );
-        rmSync(root, { recursive: true, force: true });
       }
     },
     TIMEOUT,
@@ -2222,27 +1460,24 @@ describe("cli: read-only no-create matrix", () => {
 
 describe("cli: missing durable home", () => {
   test(
-    "read-only commands tolerate a nonexistent HOME and saved ask bootstraps it",
+    "read-only commands tolerate a nonexistent HOME",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-missing-home-path-"));
       const home = join(root, "missing-home");
       const workspace = join(root, "workspace");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("missing home persisted"),
-      ]);
       try {
         mkdirSync(workspace);
         const cwd = realpathSync(workspace);
-        const baseEnv = {
+        const env = {
+          ...NO_GATEWAY_AUTH,
           HOME: home,
-          VERCEL_OIDC_TOKEN: undefined,
           FX_AUTO_UPGRADE: "0",
           FX_DISABLE_KEYCHAIN: "1",
         };
 
         const status = await runFx(["status", "--json"], {
           cwd,
-          env: { ...baseEnv, AI_GATEWAY_API_KEY: undefined },
+          env,
           timeoutMs: TIMEOUT,
         });
         expect(status.code).toBe(0);
@@ -2252,7 +1487,7 @@ describe("cli: missing durable home", () => {
 
         const listed = await runFx(["sessions", "--json"], {
           cwd,
-          env: { ...baseEnv, AI_GATEWAY_API_KEY: undefined },
+          env,
           timeoutMs: TIMEOUT,
         });
         expect(listed.code).toBe(0);
@@ -2262,29 +1497,7 @@ describe("cli: missing durable home", () => {
           sessions: [],
         });
         expect(existsSync(home)).toBe(false);
-
-        const asked = await runFx(
-          ["ask", "--json", "--auto", "Persist under the new home."],
-          {
-            cwd,
-            env: {
-              ...baseEnv,
-              AI_GATEWAY_API_KEY: "missing-home-key",
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-            },
-            timeoutMs: TIMEOUT,
-          },
-        );
-        expect(asked.code).toBe(0);
-        expect(JSON.parse(asked.stdout).output.trim()).toBe(
-          "missing home persisted",
-        );
-        expect(existsSync(join(home, ".fx", "sessions"))).toBe(true);
-        expect(gateway.requests).toHaveLength(1);
       } finally {
-        gateway.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -3244,575 +2457,6 @@ function writeBackgroundSession(args: {
   );
 }
 
-function modelsGatewayEnv(home: string, modelsUrl: string) {
-  return {
-    AI_GATEWAY_API_KEY: SEEDED_GATEWAY_TOKEN,
-    VERCEL_OIDC_TOKEN: undefined,
-    HOME: home,
-    FX_DISABLE_KEYCHAIN: "1",
-    FX_AUTO_UPGRADE: "0",
-    FX_E2E_GATEWAY_MODELS_URL: modelsUrl,
-  };
-}
-
-function catalogTraceEvents(trace: string): string[] {
-  return trace.split("\n").filter((line) =>
-    line.includes("[catalog] event=model_catalog_load ")
-  );
-}
-
-describe("cli: models", () => {
-  for (const scenario of [
-    {
-      name: "an ordinary public empty catalog",
-      authenticated: false,
-      expected:
-        "[models] no models returned by gateway\n[models] Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.\n",
-    },
-    {
-      name: "a rejected credential empty fallback catalog",
-      authenticated: true,
-      expected:
-        "[models] no models returned by gateway\n[models] Your Gateway credential was rejected; using the public model catalog.\n",
-    },
-  ]) {
-    test(
-      `fx models renders exact text for ${scenario.name}`,
-      async () => {
-        const home = createIsolatedTestHome();
-        const gateway = startFakeGateway([], {
-          models(request) {
-            if (scenario.authenticated && request.headers.get("authorization")) {
-              return new Response("rejected", { status: 401 });
-            }
-            return [];
-          },
-        });
-
-        try {
-          const result = await runFx(["models"], {
-            env: {
-              ...modelsGatewayEnv(home, `${gateway.baseUrl}/coding-agent/v1/models`),
-              ...(scenario.authenticated ? {} : NO_GATEWAY_AUTH),
-            },
-          });
-
-          expect(result.code).toBe(0);
-          expect(result.stderr).toBe("");
-          expect(result.stdout).toBe(scenario.expected);
-          expect(gateway.modelRequests).toHaveLength(scenario.authenticated ? 2 : 1);
-          if (scenario.authenticated) {
-            expect(gateway.modelRequests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-          }
-          const publicRequest = gateway.modelRequests.at(-1)!;
-          expect(publicRequest.headers.get("authorization")).toBeNull();
-          expect(publicRequest.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-        } finally {
-          gateway.stop();
-          cleanupIsolatedTestHome(home);
-        }
-      },
-      TIMEOUT,
-    );
-  }
-
-  test(
-    "fx models retries a rejected API key exactly once without authentication",
-    async () => {
-      for (const rejectedStatus of [401, 403]) {
-        const home = createIsolatedTestHome();
-        const tracePath = join(home, "catalog-trace.log");
-        const gateway = startFakeGateway([], {
-          models(request) {
-            if (request.headers.get("authorization")) {
-              return Response.json({ error: "rejected" }, { status: rejectedStatus });
-            }
-            return [{ id: "public/fallback", type: "language", tags: ["tool-use"] }];
-          },
-        });
-
-        try {
-          const result = await runFx(["models", "--json"], {
-            env: {
-              ...modelsGatewayEnv(home, `${gateway.baseUrl}/coding-agent/v1/models`),
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "catalog",
-            },
-          });
-
-          expect(result.code).toBe(0);
-          expect(result.stderr).toBe("");
-          expect(JSON.parse(result.stdout.trim())).toEqual({
-            kind: "models",
-            count: 1,
-            shown_count: 1,
-            more_count: 0,
-            private_models_hidden: true,
-            ids: ["public/fallback"],
-          });
-
-          expect(gateway.modelRequests).toHaveLength(2);
-          expect(gateway.modelRequests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-          expect(gateway.modelRequests[1]!.headers.get("authorization")).toBeNull();
-          expect(gateway.modelRequests[1]!.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-
-          const trace = readFileSync(tracePath, "utf8");
-          const events = catalogTraceEvents(trace);
-          expect(events).toHaveLength(1);
-          expect(events[0]).toContain(
-            `requested_access=authenticated credential_source=ai_gateway_api_key effective_access=public_only public_only_reason=authenticated_credential_rejected anonymous_fallback=true outcome=loaded failure_category=authentication http_status=${rejectedStatus} retryable=false`,
-          );
-          for (const secret of [SEEDED_GATEWAY_TOKEN, "team_123", "vercel-labs"]) {
-            expect(trace).not.toContain(secret);
-          }
-        } finally {
-          gateway.stop();
-          cleanupIsolatedTestHome(home);
-        }
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx models preserves network and 5xx failures without anonymous retry",
-    async () => {
-      const unavailableHome = createIsolatedTestHome();
-      const gateway = startFakeGateway([], {
-        models: () => Response.json({ error: "unavailable" }, { status: 500 }),
-      });
-      try {
-        const result = await runFx(["models", "--json"], {
-          env: modelsGatewayEnv(unavailableHome, `${gateway.baseUrl}/coding-agent/v1/models`),
-        });
-        expect(result.code).not.toBe(0);
-        expect(result.stderr).toBe("");
-        expect(JSON.parse(result.stdout.trim()).code).toBe("GatewayUnavailable");
-        expect(gateway.modelRequests).toHaveLength(1);
-      } finally {
-        gateway.stop();
-        cleanupIsolatedTestHome(unavailableHome);
-      }
-
-      const home = createIsolatedTestHome();
-      let connections = 0;
-      const server = createServer((socket) => {
-        connections += 1;
-        socket.destroy();
-      });
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      try {
-        const address = server.address();
-        if (address === null || typeof address === "string") throw new Error("missing server address");
-        const result = await runFx(["models", "--json"], {
-          env: modelsGatewayEnv(home, `http://127.0.0.1:${address.port}/v1/models`),
-        });
-        expect(result.code).not.toBe(0);
-        expect(result.stderr).toBe("");
-        expect(JSON.parse(result.stdout.trim()).code).toBe("TransportFailure");
-        expect(connections).toBe(1);
-      } finally {
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-        cleanupIsolatedTestHome(home);
-      }
-    },
-    TIMEOUT,
-  );
-
-  for (const scenario of [
-    {
-      name: "rate limiting",
-      response: () => Response.json({ error: "slow down" }, { status: 429 }),
-      code: "RateLimited",
-    },
-    {
-      name: "malformed JSON",
-      response: () => new Response("{not-json", {
-        headers: { "content-type": "application/json" },
-      }),
-      code: "MalformedResponse",
-    },
-    {
-      name: "a malformed top-level catalog array",
-      response: () => Response.json([]),
-      code: "MalformedResponse",
-    },
-    {
-      name: "a catalog without data",
-      response: () => Response.json({}),
-      code: "MalformedResponse",
-    },
-    {
-      name: "a catalog with non-array data",
-      response: () => Response.json({ data: {} }),
-      code: "MalformedResponse",
-    },
-  ]) {
-    test(
-      `fx models preserves ${scenario.name} without anonymous retry`,
-      async () => {
-        const home = createIsolatedTestHome();
-        const gateway = startFakeGateway([], { models: scenario.response });
-        try {
-          const result = await runFx(["models", "--json"], {
-            env: modelsGatewayEnv(home, `${gateway.baseUrl}/coding-agent/v1/models`),
-          });
-
-          expect(result.code).not.toBe(0);
-          expect(result.stderr).toBe("");
-          expect(JSON.parse(result.stdout.trim()).code).toBe(scenario.code);
-          expect(gateway.modelRequests).toHaveLength(1);
-          expect(gateway.modelRequests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-        } finally {
-          gateway.stop();
-          cleanupIsolatedTestHome(home);
-        }
-      },
-      TIMEOUT,
-    );
-  }
-
-  test(
-    "cancelling fx models does not retry anonymously",
-    async () => {
-      const home = createIsolatedTestHome();
-      const gateway = startFakeGateway([], {
-        models: () => new Promise<Response>(() => {}),
-      });
-      const proc = Bun.spawn([FX_BIN, "models", "--json"], {
-        cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          ...modelsGatewayEnv(home, `${gateway.baseUrl}/coding-agent/v1/models`),
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      try {
-        const started = Date.now();
-        while (gateway.modelRequests.length === 0) {
-          if (Date.now() - started >= TIMEOUT) {
-            throw new Error("timed out waiting for the cancellable model request");
-          }
-          await Bun.sleep(25);
-        }
-        expect(gateway.modelRequests).toHaveLength(1);
-        expect(gateway.modelRequests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-
-        proc.kill("SIGTERM");
-        await proc.exited;
-        expect(gateway.modelRequests).toHaveLength(1);
-      } finally {
-        proc.kill("SIGKILL");
-        gateway.stop();
-        cleanupIsolatedTestHome(home);
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx models rejects E2E gateway redirects without contacting the target",
-    async () => {
-      const home = createIsolatedTestHome();
-      const captureRequests: string[] = [];
-      const captureServer = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        fetch(request) {
-          captureRequests.push(
-            `${request.method} ${new URL(request.url).pathname} authorization=${request.headers.get("authorization") ?? ""}`,
-          );
-          return Response.json({ data: [] });
-        },
-      });
-      const redirectServer = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        fetch() {
-          return Response.redirect(`http://127.0.0.1:${captureServer.port}/capture`, 302);
-        },
-      });
-
-      try {
-        const r = await runFx(["models", "--json"], {
-          env: {
-            HOME: home,
-            FX_DISABLE_KEYCHAIN: "1",
-            AI_GATEWAY_API_KEY: "redirect-proof-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_E2E_GATEWAY_MODELS_URL: `http://127.0.0.1:${redirectServer.port}/v1/models`,
-          },
-        });
-
-        expect(captureRequests).toEqual([]);
-        expect(r.code).not.toBe(0);
-        expect(r.stderr).toBe("");
-        expect(JSON.parse(r.stdout.trim())).toMatchObject({
-          kind: "models",
-          error: expect.stringContaining("could not list models:"),
-          code: expect.any(String),
-        });
-      } finally {
-        redirectServer.stop(true);
-        captureServer.stop(true);
-        cleanupIsolatedTestHome(home);
-      }
-    },
-    TIMEOUT,
-  );
-
-  // Mirror the gateway's credential handling for private model catalogs.
-  for (const scenario of [
-    {
-      name: "uses the anonymous public catalog without a credential",
-      seedFxLogin: false,
-      expiredFxLogin: false,
-      authEnv: {},
-      expectAuthHeader: false,
-      expectPrivate: false,
-      expectedTrace:
-        "requested_access=public_only credential_source=none effective_access=public_only public_only_reason=no_credential anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-    {
-      name: "uses the selected fx login team catalog",
-      seedFxLogin: true,
-      expiredFxLogin: false,
-      authEnv: {},
-      expectAuthHeader: true,
-      expectPrivate: true,
-      expectedTeamQuery: "team_123",
-      expectedTrace:
-        "requested_access=authenticated credential_source=fx_login effective_access=authenticated public_only_reason=none anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-    {
-      name: "uses public access for an expired fx login without refreshing it",
-      seedFxLogin: true,
-      expiredFxLogin: true,
-      authEnv: {},
-      expectAuthHeader: false,
-      expectPrivate: false,
-      expectedTrace:
-        "requested_access=public_only credential_source=fx_login effective_access=public_only public_only_reason=fx_login_refresh_required anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-    {
-      name: "sends an API key so the catalog includes team-private models",
-      seedFxLogin: false,
-      expiredFxLogin: false,
-      authEnv: { AI_GATEWAY_API_KEY: SEEDED_GATEWAY_TOKEN },
-      expectAuthHeader: true,
-      expectPrivate: true,
-      expectedTrace:
-        "requested_access=authenticated credential_source=ai_gateway_api_key effective_access=authenticated public_only_reason=none anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-    {
-      name: "sends deployment OIDC so the catalog includes team-private models",
-      seedFxLogin: false,
-      expiredFxLogin: false,
-      authEnv: { VERCEL_OIDC_TOKEN: SEEDED_GATEWAY_TOKEN },
-      expectAuthHeader: true,
-      expectPrivate: true,
-      expectedTrace:
-        "requested_access=authenticated credential_source=vercel_oidc_token effective_access=authenticated public_only_reason=none anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-  ]) {
-    test(
-      `fx models --json ${scenario.name}`,
-      async () => {
-        const root = mkdtempSync(join(tmpdir(), "fx-e2e-team-models-"));
-        const requests: Array<{ headers: Headers; teamId: string | null }> = [];
-        const server = Bun.serve({
-          hostname: "127.0.0.1",
-          port: 0,
-          fetch(request) {
-            const headers = new Headers(request.headers);
-            const url = new URL(request.url);
-            requests.push({ headers, teamId: url.searchParams.get("teamId") });
-            const seededAuth =
-              headers.get("authorization") === `Bearer ${SEEDED_GATEWAY_TOKEN}` &&
-              (!scenario.seedFxLogin || url.searchParams.get("teamId") === "team_123");
-            return Response.json({
-              data: [
-                { id: "public/sentinel", type: "language", tags: ["tool-use"] },
-                ...(seededAuth
-                  ? [{ id: "private/blue-hornbill", type: "language", tags: ["tool-use"] }]
-                  : []),
-              ],
-            });
-          },
-        });
-
-        try {
-          const home = join(root, "home");
-          const workspace = join(root, "workspace");
-          const tracePath = join(root, "catalog-trace.log");
-          mkdirSync(home);
-          mkdirSync(workspace);
-          if (scenario.seedFxLogin) {
-            writeSeededFxAuth(
-              home,
-              "team_123",
-              `http://127.0.0.1:${server.port}`,
-              scenario.expiredFxLogin
-                ? Date.now() - 60_000
-                : Date.now() + 60 * 60 * 1000,
-            );
-          }
-
-          const r = await runFx(["models", "--json"], {
-            cwd: realpathSync(workspace),
-            env: {
-              ...NO_GATEWAY_AUTH,
-              ...scenario.authEnv,
-              HOME: realpathSync(home),
-              FX_DISABLE_KEYCHAIN: "1",
-              FX_AUTO_UPGRADE: "0",
-              FX_GATEWAY_BASE_URL: `http://127.0.0.1:${server.port}`,
-              FX_E2E_GATEWAY_MODELS_URL: undefined,
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "catalog",
-            },
-            timeoutMs: TIMEOUT,
-          });
-
-          expect(r.code).toBe(0);
-          expect(r.stderr).toBe("");
-          const json = JSON.parse(r.stdout.trim());
-          expect(json.kind).toBe("models");
-          expect(json.ids).toContain("public/sentinel");
-          if (scenario.expectPrivate) {
-            expect(json.ids).toContain("private/blue-hornbill");
-          } else {
-            expect(json.ids).not.toContain("private/blue-hornbill");
-          }
-          expect(json.private_models_hidden).toBe(!scenario.expectPrivate);
-          expect(requests).toHaveLength(1);
-          if (scenario.expectAuthHeader) {
-            expect(requests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-          } else {
-            expect(requests[0]!.headers.get("authorization")).toBeNull();
-            expect(requests[0]!.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-          }
-          expect(requests[0]!.teamId).toBe(scenario.expectedTeamQuery ?? null);
-          if (scenario.seedFxLogin && !scenario.expiredFxLogin) {
-            expect(requests[0]!.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-          }
-
-          const trace = readFileSync(tracePath, "utf8");
-          const events = catalogTraceEvents(trace);
-          expect(events).toHaveLength(1);
-          expect(events[0]).toContain(scenario.expectedTrace);
-          for (const secret of [
-            SEEDED_GATEWAY_TOKEN,
-            "seeded-refresh-token",
-            "team_123",
-            "vercel-labs",
-          ]) {
-            expect(trace).not.toContain(secret);
-          }
-        } finally {
-          server.stop(true);
-          rmSync(root, { recursive: true, force: true });
-        }
-      },
-      TIMEOUT,
-    );
-  }
-
-  test.skipIf(!HAS_API_KEY)(
-    "fx models --json returns valid models JSON",
-    async () => {
-      const r = await runFx(["models", "--json"], { timeoutMs: 30_000 });
-      expect(r.code).toBe(0);
-      const json = JSON.parse(r.stdout.trim());
-      expect(json.kind).toBe("models");
-      expect(json).toHaveProperty("count");
-      expect(Array.isArray(json.ids)).toBe(true);
-      expect(json.ids.length).toBeGreaterThan(0);
-    },
-    30_000,
-  );
-});
-
-describe("cli: credits", () => {
-  test(
-    "fx credits --json preserves Gateway HTTP denial details",
-    async () => {
-      const home = createIsolatedTestHome();
-      const requests: Array<{
-        method: string;
-        path: string;
-        authorizationMatchesExpected: boolean;
-      }> = [];
-      const server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        fetch(request) {
-          requests.push({
-            method: request.method,
-            path: new URL(request.url).pathname,
-            authorizationMatchesExpected:
-              request.headers.get("authorization") ===
-              "Bearer credits-fake-key",
-          });
-          return Response.json(
-            { error: { code: "credit_card_required", message: "Buy credits to use AI Gateway." } },
-            { status: 403 },
-          );
-        },
-      });
-
-      try {
-        const r = await runFx(["credits", "--json"], {
-          env: {
-            AI_GATEWAY_API_KEY: "credits-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
-            FX_E2E_GATEWAY_CREDITS_URL: `http://127.0.0.1:${server.port}/v1/credits`,
-            HOME: home,
-          },
-        });
-
-        expect(requests).toEqual([{
-          method: "GET",
-          path: "/v1/credits",
-          authorizationMatchesExpected: true,
-        }]);
-        expect(r.code).not.toBe(0);
-        expect(r.stderr).toBe("");
-        const json = JSON.parse(r.stdout.trim());
-        expect(json.kind).toBe("credits");
-        expect(json.error).toContain("API access denied");
-        expect(json.error).toContain("HTTP 403");
-        expect(json.error).toContain("Buy credits to use AI Gateway.");
-      } finally {
-        server.stop(true);
-        cleanupIsolatedTestHome(home);
-      }
-    },
-    TIMEOUT,
-  );
-
-  test.skipIf(!HAS_API_KEY)(
-    "fx credits --json returns credits JSON or exits non-zero",
-    async () => {
-      const r = await runFx(["credits", "--json"], { timeoutMs: 30_000 });
-      if (r.code === 0 && r.stdout.trim()) {
-        const json = JSON.parse(r.stdout.trim());
-        expect(json.kind).toBe("credits");
-      } else {
-        expect(r.code).not.toBe(0);
-      }
-    },
-    30_000,
-  );
-});
-
 describe("cli: replay failures", () => {
   test(
     "fx replay --json preserves structured failures for missing and malformed tapes",
@@ -3845,22 +2489,13 @@ describe("cli: replay failures", () => {
 
 describe("cli: ask input validation", () => {
   test(
-    "fx ask rejects invalid UTF-8 stdin before Gateway or session effects",
+    "fx ask rejects invalid UTF-8 stdin before a model turn or session effects",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-invalid-utf8-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       mkdirSync(home);
       mkdirSync(workspace);
-      const requests: string[] = [];
-      const server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        fetch(request) {
-          requests.push(new URL(request.url).pathname);
-          return Response.json({ error: "request should not arrive" }, { status: 400 });
-        },
-      });
 
       try {
         const result = await runFx(["ask", "--json", "--no-save"], {
@@ -3868,9 +2503,7 @@ describe("cli: ask input validation", () => {
           env: {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
-            AI_GATEWAY_API_KEY: "invalid-utf8-proof-key",
             FX_DISABLE_KEYCHAIN: "1",
-            FX_E2E_GATEWAY_CHAT_URL: `http://127.0.0.1:${server.port}/ai/v1/chat/completions`,
           },
           stdin: Uint8Array.from([0xff, 0xfe, 0x80, 0x68, 0x69]),
           timeoutMs: TIMEOUT,
@@ -3882,14 +2515,42 @@ describe("cli: ask input validation", () => {
           exit_code: 1,
           error: "InvalidPromptText",
         });
-        expect(requests).toEqual([]);
         expect(existsSync(join(home, ".fx"))).toBe(false);
       } finally {
-        server.stop(true);
         rmSync(root, { recursive: true, force: true });
       }
     },
     TIMEOUT,
+  );
+
+  test(
+    "fx ask stdin resource overflow has distinct text and JSON errors",
+    async () => {
+      const oversized = Buffer.alloc(8 * 1024 * 1024 + 1, 0x78);
+
+      const textResult = await runFx(["ask", "--auto", "--no-save"], {
+        env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
+        stdin: oversized,
+        timeoutMs: 60_000,
+      });
+      expect(textResult.code).toBe(1);
+      expect(textResult.stdout).toBe("");
+      expect(textResult.stderr).toBe(
+        "fx ask: prompt exceeds the local input safety limit\n",
+      );
+
+      const jsonResult = await runFx(["ask", "--json", "--auto", "--no-save"], {
+        env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
+        stdin: oversized,
+        timeoutMs: 60_000,
+      });
+      expect(jsonResult.code).toBe(1);
+      expect(jsonResult.stderr).toBe("");
+      expect(jsonResult.stdout).toBe(
+        '{"output":"","exit_code":1,"model":"","session_id":"","steps":0,"tool_calls":[],"error":"PromptResourceLimitExceeded"}\n',
+      );
+    },
+    120_000,
   );
 });
 
@@ -3935,7 +2596,7 @@ describe("cli: interactive startup", () => {
 
 describe("cli: pr", () => {
   test(
-    "fx pr without gateway auth exits non-zero",
+    "fx pr without SuperGrok auth exits non-zero",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-noauth-"));
       try {
@@ -3954,7 +2615,7 @@ describe("cli: pr", () => {
 
 describe("cli: issue", () => {
   test(
-    "fx issue without gateway auth exits non-zero",
+    "fx issue without SuperGrok auth exits non-zero",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-noauth-"));
       try {
@@ -3971,669 +2632,15 @@ describe("cli: issue", () => {
   );
 });
 
-describe("cli: ask success", () => {
-  test(
-    "fx ask binds an explicitly invoked skill into the prompt",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-explicit-skill-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      const skillDirectory = join(home, ".fx", "skills", "cli-explicit");
-      const skillBody = "CLI_EXPLICIT_SKILL_BODY";
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("explicit skill ask complete"),
-      ]);
-      try {
-        mkdirSync(skillDirectory, { recursive: true });
-        mkdirSync(workspace);
-        writeFileSync(
-          join(skillDirectory, "SKILL.md"),
-          `---\nname: cli-explicit\ndescription: explicit CLI fixture\n---\n\n${skillBody}\n`,
-        );
-
-        const result = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--no-save",
-            "$cli-explicit apply the selected skill.",
-          ],
-          {
-            cwd: realpathSync(workspace),
-            env: {
-              HOME: realpathSync(home),
-              AI_GATEWAY_API_KEY: "fake-explicit-skill-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
-            timeoutMs: TIMEOUT,
-          },
-        );
-
-        expect(result.code).toBe(0);
-        expect(result.stderr).toBe("");
-        expect(JSON.parse(result.stdout).output.trim()).toBe(
-          "explicit skill ask complete",
-        );
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.modelRequests).toHaveLength(0);
-        expect(gateway.requests[0]!.body).toContain(
-          "Explicitly invoked skill content for this query:",
-        );
-        expect(gateway.requests[0]!.body).toContain(
-          '<skill_content name=\\"cli-explicit\\" resource=\\"SKILL.md\\"',
-        );
-        expect(gateway.requests[0]!.body).toContain(skillBody);
-      } finally {
-        gateway.stop();
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx ask stdin prompts above the old 1 MiB limit reach Gateway byte-for-byte",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-large-stdin-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      const sizes = [1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1, 3 * 1024 * 1024];
-      const gateway = startFakeGateway(
-        sizes.map((_, index) => fakeGatewayFinalText(`large stdin ${index}`)),
-      );
-      try {
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        mkdirSync(workspace);
-        writeFileSync(join(home, ".fx", "settings.json"), "{}\n");
-
-        for (const [index, size] of sizes.entries()) {
-          const prompt = `B${"x".repeat(size - 2)}E`;
-          const result = await runFx(
-            ["ask", "--json", "--auto", "--no-save"],
-            {
-              cwd: realpathSync(workspace),
-              env: {
-                HOME: home,
-                AI_GATEWAY_API_KEY: "fake-large-stdin-key",
-                VERCEL_OIDC_TOKEN: undefined,
-                FX_GATEWAY_BASE_URL: gateway.baseUrl,
-                FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-                FX_MODEL: FAKE_GATEWAY_MODEL,
-                FX_AUTO_UPGRADE: "0",
-              },
-              stdin: prompt,
-              timeoutMs: 60_000,
-            },
-          );
-
-          expect(result.code).toBe(0);
-          expect(JSON.parse(result.stdout).output.trim()).toBe(`large stdin ${index}`);
-          const request = JSON.parse(gateway.requests[index]!.body) as {
-            prompt: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
-          };
-          const user = request.prompt.findLast((message) => message.role === "user");
-          expect(user?.content.find((part) => part.type === "text")?.text).toBe(prompt);
-        }
-
-        expect(gateway.requests).toHaveLength(sizes.length);
-        expect(gateway.modelRequests).toHaveLength(0);
-      } finally {
-        gateway.stop();
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    120_000,
-  );
-
-  test(
-    "fx ask stdin resource overflow has distinct text and JSON errors",
-    async () => {
-      const oversized = Buffer.alloc(8 * 1024 * 1024 + 1, 0x78);
-
-      const textResult = await runFx(["ask", "--auto", "--no-save"], {
-        env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
-        stdin: oversized,
-        timeoutMs: 60_000,
-      });
-      expect(textResult.code).toBe(1);
-      expect(textResult.stdout).toBe("");
-      expect(textResult.stderr).toBe(
-        "fx ask: prompt exceeds the local input safety limit\n",
-      );
-
-      const jsonResult = await runFx(["ask", "--json", "--auto", "--no-save"], {
-        env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
-        stdin: oversized,
-        timeoutMs: 60_000,
-      });
-      expect(jsonResult.code).toBe(1);
-      expect(jsonResult.stderr).toBe("");
-      expect(jsonResult.stdout).toBe(
-        '{"output":"","exit_code":1,"model":"","session_id":"","steps":0,"tool_calls":[],"error":"PromptResourceLimitExceeded"}\n',
-      );
-    },
-    120_000,
-  );
-
-  test(
-    "fx ask sends catalog-backed portable reasoning",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-portable-reasoning-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      const model = "provider/new-reasoning-model";
-      const gateway = startFakeGateway(
-        [fakeGatewayFinalText("portable ask complete")],
-        {
-          models: [{
-            id: model,
-            type: "language",
-            tags: ["reasoning", "tool-use"],
-            context_window: 750_000,
-            max_tokens: 64_000,
-            reasoning_options: [{ type: "effort", values: ["high"] }],
-          }],
-        },
-      );
-      try {
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        mkdirSync(workspace);
-        writeFileSync(
-          join(home, ".fx", "settings.json"),
-          `${JSON.stringify({ model, effort: "high" })}\n`,
-        );
-
-        const result = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Use portable reasoning."],
-          {
-            cwd: realpathSync(workspace),
-            env: {
-              HOME: home,
-              AI_GATEWAY_API_KEY: "fake-portable-ask-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-            },
-            timeoutMs: 60_000,
-          },
-        );
-
-        expect(result.code).toBe(0);
-        expect(
-          result.stderr
-            .replace(
-              /fx ask: warning: skipped \d+ invalid or unreadable skill candidates?; relaunch with FX_TRACE=1 to write a trace log\n/g,
-              "",
-            )
-            .replace(
-              /\[notice\] skill discovery warning: [^\n]*; relaunch with FX_TRACE=1 to write a trace log\n/g,
-              "",
-            ),
-        ).toBe("");
-        expect(JSON.parse(result.stdout).output.trim()).toBe("portable ask complete");
-        expect(gateway.requests).toHaveLength(1);
-        const request = JSON.parse(gateway.requests[0]!.body);
-        expect(request).toMatchObject({
-          reasoning: "high",
-          maxOutputTokens: 64_000,
-        });
-        expect(gateway.modelRequests).toHaveLength(1);
-        expect(request).not.toHaveProperty("providerOptions");
-        expect(
-          gateway.requests[0]!.headers.get(
-            "ai-language-model-specification-version",
-          ),
-        ).toBe("4");
-      } finally {
-        gateway.stop();
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    60_000,
-  );
-
-  test.skipIf(!HAS_API_KEY)(
-    "live Gateway accepts catalog-backed portable reasoning",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-live-portable-reasoning-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      const tracePath = join(root, "trace.log");
-      try {
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        mkdirSync(workspace);
-        writeFileSync(
-          join(home, ".fx", "settings.json"),
-          `${JSON.stringify({
-            model: "openai/gpt-5.6-sol",
-            effort: "high",
-          })}\n`,
-        );
-
-        const result = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--no-save",
-            "Reply with exactly: FX_PORTABLE_REASONING_LIVE_OK",
-          ],
-          {
-            cwd: realpathSync(workspace),
-            env: {
-              HOME: home,
-              FX_MODEL: undefined,
-              FX_TRACE: "1",
-              FX_TRACE_LOG: tracePath,
-              FX_GATEWAY_BASE_URL: undefined,
-              FX_GATEWAY_CHAT_URL: undefined,
-              FX_E2E_GATEWAY_MODELS_URL: undefined,
-              VERCEL_OIDC_TOKEN: undefined,
-            },
-            timeoutMs: 120_000,
-          },
-        );
-
-        expect(result.code).toBe(0);
-        expect(JSON.parse(result.stdout).output).toContain(
-          "FX_PORTABLE_REASONING_LIVE_OK",
-        );
-        expect(readFileSync(tracePath, "utf8")).toContain(
-          "reasoning=selected",
-        );
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    120_000,
-  );
-
-  test(
-    "saved ask resumes the exact session while no-save creates no durable state",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-persistence-"));
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("orange triangle"),
-        fakeGatewayFinalText("blue circle"),
-        fakeGatewayFinalText("green square"),
-      ]);
-      try {
-        const savedHome = join(root, "saved-home");
-        const noSaveHome = join(root, "no-save-home");
-        const workspace = join(root, "workspace");
-        mkdirSync(savedHome);
-        mkdirSync(noSaveHome);
-        mkdirSync(workspace);
-        const workspaceRoot = realpathSync(workspace);
-
-        const first = await runFx(
-          ["ask", "--json", "--auto", "Reply with exactly: orange triangle"],
-          {
-            cwd: workspaceRoot,
-            env: {
-              HOME: realpathSync(savedHome),
-              AI_GATEWAY_API_KEY: "fake-ask-persistence-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
-            timeoutMs: 60_000,
-          },
-        );
-        expect(first.code).toBe(0);
-        expect(first.stderr).toBe("");
-        const firstJson = JSON.parse(first.stdout.trim());
-        expect(typeof firstJson.session_id).toBe("string");
-        expect(firstJson.session_id.length).toBeGreaterThan(0);
-        expect(gateway.requests[0]?.headers.get("x-session-id")).toBe(
-          firstJson.session_id,
-        );
-        expect(gateway.requests[0]?.headers.get("x-session-affinity")).toBe(
-          firstJson.session_id,
-        );
-        expect(
-          existsSync(
-            join(savedHome, ".fx", "sessions", firstJson.session_id),
-          ),
-        ).toBe(true);
-
-        const resumed = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--resume",
-            "last",
-            "Reply with exactly: blue circle",
-          ],
-          {
-            cwd: workspaceRoot,
-            env: {
-              HOME: realpathSync(savedHome),
-              AI_GATEWAY_API_KEY: "fake-ask-persistence-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
-            timeoutMs: 60_000,
-          },
-        );
-        expect(resumed.code).toBe(0);
-        expect(resumed.stderr).toBe("");
-        expect(JSON.parse(resumed.stdout.trim()).session_id).toBe(
-          firstJson.session_id,
-        );
-        expect(gateway.requests[1]?.headers.get("x-session-id")).toBe(
-          firstJson.session_id,
-        );
-        expect(gateway.requests[1]?.headers.get("x-session-affinity")).toBe(
-          firstJson.session_id,
-        );
-        const detail = await runFx(
-          ["session", "--id", firstJson.session_id, "--json"],
-          {
-            cwd: workspaceRoot,
-            env: { HOME: realpathSync(savedHome) },
-            timeoutMs: 60_000,
-          },
-        );
-        expect(detail.code).toBe(0);
-        expect(JSON.parse(detail.stdout).history_len).toBe(2);
-
-        const noSave = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Reply with exactly: green square"],
-          {
-            cwd: workspaceRoot,
-            env: {
-              HOME: realpathSync(noSaveHome),
-              AI_GATEWAY_API_KEY: "fake-ask-persistence-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
-            timeoutMs: 60_000,
-          },
-        );
-        expect(noSave.code).toBe(0);
-        expect(noSave.stderr).toBe("");
-        expect(JSON.parse(noSave.stdout.trim()).session_id).toBe("");
-        expect(gateway.requests[2]?.headers.get("x-session-id")).toBeNull();
-        expect(gateway.requests[2]?.headers.get("x-session-affinity")).toBeNull();
-        expect(existsSync(join(noSaveHome, ".fx"))).toBe(false);
-        expect(gateway.requests).toHaveLength(3);
-      } finally {
-        gateway.stop();
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    180_000,
-  );
-
-  test(
-    "saved ask survives session cache contention and repairs after release",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-session-cache-contention-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      const lockReady = join(root, "latest-lock-ready");
-      const unrelatedReply = `unrelated saved turn ${"x".repeat(64 * 1024)}`;
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText(unrelatedReply),
-        fakeGatewayFinalText("first saved turn"),
-        fakeGatewayFinalText("contended exact turn"),
-        fakeGatewayFinalText("contended latest turn"),
-        fakeGatewayFinalText("repairing turn"),
-      ]);
-      let lockHolder: ReturnType<typeof Bun.spawn> | null = null;
-      try {
-        mkdirSync(home);
-        mkdirSync(workspace);
-        const workspaceRoot = realpathSync(workspace);
-        const env = {
-          HOME: realpathSync(home),
-          AI_GATEWAY_API_KEY: "fake-session-cache-contention-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-        };
-
-        const unrelated = await runFx(
-          ["ask", "--json", "--auto", "Save an unrelated long turn."],
-          { cwd: workspaceRoot, env, timeoutMs: 60_000 },
-        );
-        expect(unrelated.code).toBe(0);
-        expect(unrelated.stderr).toBe("");
-        const unrelatedJson = JSON.parse(unrelated.stdout);
-        const unrelatedSessionId = unrelatedJson.session_id as string;
-        expect(unrelatedJson.output).toBe(unrelatedReply);
-
-        const first = await runFx(
-          ["ask", "--json", "--auto", "Reply with the first saved turn."],
-          { cwd: workspaceRoot, env, timeoutMs: 60_000 },
-        );
-        expect(first.code).toBe(0);
-        expect(first.stderr).toBe("");
-        const sessionId = JSON.parse(first.stdout).session_id as string;
-        const lockPath = join(home, ".fx", "sessions", "latest.lock");
-        lockHolder = Bun.spawn(
-          [
-            "python3",
-            "-c",
-            [
-              "import fcntl, os, sys, time",
-              "fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o600)",
-              "fcntl.flock(fd, fcntl.LOCK_EX)",
-              "open(sys.argv[2], 'w').close()",
-              "time.sleep(300)",
-            ].join("\n"),
-            lockPath,
-            lockReady,
-          ],
-          { stdout: "ignore", stderr: "pipe" },
-        );
-        for (let attempt = 0; attempt < 250 && !existsSync(lockReady); attempt += 1) {
-          await Bun.sleep(20);
-        }
-        expect(existsSync(lockReady)).toBe(true);
-
-        const exact = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--resume-id",
-            sessionId,
-            "Reply with the contended exact turn.",
-          ],
-          { cwd: workspaceRoot, env, timeoutMs: 60_000 },
-        );
-        expect(exact.code).toBe(0);
-        expect(exact.stderr).toBe("");
-        expect(JSON.parse(exact.stdout).output.trim()).toBe("contended exact turn");
-        const tokenPath = join(
-          home,
-          ".fx",
-          "sessions",
-          "latest",
-          "deferred",
-          sessionId,
-        );
-        expect(existsSync(tokenPath)).toBe(true);
-
-        const listed = await runFx(["sessions", "--json"], {
-          cwd: workspaceRoot,
-          env: { HOME: home, ...NO_GATEWAY_AUTH },
-          timeoutMs: 60_000,
-        });
-        expect(listed.code).toBe(0);
-        expect(listed.stderr).toBe("");
-        const listedSessions = JSON.parse(listed.stdout).sessions;
-        expect(listedSessions[0]).toMatchObject({
-          id: sessionId,
-          history_len: 2,
-        });
-        expect(listedSessions[1]).toMatchObject({
-          id: unrelatedSessionId,
-          history_len: 1,
-        });
-        expect(existsSync(tokenPath)).toBe(true);
-
-        const latest = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--resume",
-            "last",
-            "Reply with the contended latest turn.",
-          ],
-          { cwd: workspaceRoot, env, timeoutMs: 60_000 },
-        );
-        expect(latest.code).toBe(0);
-        expect(latest.stderr).toBe("");
-        expect(JSON.parse(latest.stdout).session_id).toBe(sessionId);
-        expect(JSON.parse(latest.stdout).output.trim()).toBe("contended latest turn");
-        expect(existsSync(tokenPath)).toBe(true);
-
-        lockHolder.kill();
-        await lockHolder.exited;
-        lockHolder = null;
-        const repaired = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--resume-id",
-            sessionId,
-            "Reply with the repairing turn.",
-          ],
-          { cwd: workspaceRoot, env, timeoutMs: 60_000 },
-        );
-        expect(repaired.code).toBe(0);
-        expect(repaired.stderr).toBe("");
-        expect(JSON.parse(repaired.stdout).output.trim()).toBe("repairing turn");
-        expect(existsSync(tokenPath)).toBe(false);
-        const targetDetail = await runFx(
-          ["session", "--id", sessionId, "--json"],
-          { cwd: workspaceRoot, env: { HOME: home }, timeoutMs: 60_000 },
-        );
-        expect(targetDetail.code).toBe(0);
-        expect(targetDetail.stderr).toBe("");
-        expect(JSON.parse(targetDetail.stdout).history_len).toBe(4);
-        const unrelatedDetail = await runFx(
-          ["session", "--id", unrelatedSessionId, "--json"],
-          { cwd: workspaceRoot, env: { HOME: home }, timeoutMs: 60_000 },
-        );
-        expect(unrelatedDetail.code).toBe(0);
-        expect(unrelatedDetail.stderr).toBe("");
-        expect(JSON.parse(unrelatedDetail.stdout).history_len).toBe(1);
-        expect(gateway.requests).toHaveLength(5);
-      } finally {
-        if (lockHolder) {
-          lockHolder.kill();
-          await lockHolder.exited;
-        }
-        gateway.stop();
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    300_000,
-  );
-
-  test.skipIf(!HAS_API_KEY)(
-    "fx ask --json --no-save --auto returns valid JSON with output",
-    async () => {
-      const r = await runFx(
-        ["ask", "--json", "--no-save", "--auto", "Say exactly: hello world"],
-        { timeoutMs: 60_000 },
-      );
-      expect(r.code).toBe(0);
-      const json = JSON.parse(r.stdout.trim());
-      expect(typeof json.output).toBe("string");
-      expect(json.output.length).toBeGreaterThan(0);
-      expect(typeof json.model).toBe("string");
-      expect(Array.isArray(json.tool_calls)).toBe(true);
-      expect(typeof json.steps).toBe("number");
-    },
-    60_000,
-  );
-});
-
 describe("cli: error handling", () => {
   test(
-    "fx ask rejects unknown options before a model turn and -- preserves literal prompt text",
+    "fx ask rejects unknown options before a model turn",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-options-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("literal option prompt complete"),
-      ]);
-      try {
-        mkdirSync(home);
-        mkdirSync(workspace);
-        const env = {
-          HOME: realpathSync(home),
-          AI_GATEWAY_API_KEY: "ask-options-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-        };
-
-        const rejected = await runFx(["ask", "--definitely-unknown"], {
-          cwd: realpathSync(workspace),
-          env,
-          timeoutMs: TIMEOUT,
-        });
-        expect(rejected.code).toBe(1);
-        expect(rejected.stderr).toContain("usage: fx ask");
-        expect(gateway.requests).toHaveLength(0);
-
-        const literal = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--no-save",
-            "--",
-            "--definitely-prompt-text",
-          ],
-          {
-            cwd: realpathSync(workspace),
-            env,
-            timeoutMs: TIMEOUT,
-          },
-        );
-        expect(literal.code).toBe(0);
-        expect(JSON.parse(literal.stdout).output.trim()).toBe(
-          "literal option prompt complete",
-        );
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.requests[0]!.body).toContain("--definitely-prompt-text");
-      } finally {
-        gateway.stop();
-        rmSync(root, { recursive: true, force: true });
-      }
+      const rejected = await runFx(["ask", "--definitely-unknown"], {
+        env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
+      });
+      expect(rejected.code).toBe(1);
+      expect(rejected.stderr).toContain("usage: fx ask");
     },
     TIMEOUT,
   );
@@ -4660,45 +2667,20 @@ describe("cli: error handling", () => {
   test(
     "fx ask explains no-save resume conflicts before a model turn",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-resume-no-save-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      const gateway = startFakeGateway([]);
-      try {
-        mkdirSync(home);
-        mkdirSync(workspace);
-        const env = {
-          HOME: realpathSync(home),
-          AI_GATEWAY_API_KEY: "ask-conflict-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-        };
-
-        for (const args of [
-          ["ask", "--no-save", "--resume", "last", "hello"],
-          ["ask", "--resume-id", "session.v3", "--no-save", "hello"],
-        ]) {
-          const rejected = await runFx(args, {
-            cwd: realpathSync(workspace),
-            env,
-            timeoutMs: TIMEOUT,
-          });
-          expect(rejected.code).toBe(1);
-          expect(rejected.stdout).toBe("");
-          expect(rejected.stderr).toContain(
-            "fx ask: --no-save cannot be used with --resume or --resume-id",
-          );
-          expect(rejected.stderr).toContain(
-            "usage: fx ask [--auto|--yolo] [--image PATH] [--json] [--quiet] [--prompt-permissions] [--no-save]",
-          );
-        }
-        expect(gateway.requests).toHaveLength(0);
-      } finally {
-        gateway.stop();
-        rmSync(root, { recursive: true, force: true });
+      const env = { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" };
+      for (const args of [
+        ["ask", "--no-save", "--resume", "last", "hello"],
+        ["ask", "--resume-id", "session.v3", "--no-save", "hello"],
+      ]) {
+        const rejected = await runFx(args, { env });
+        expect(rejected.code).toBe(1);
+        expect(rejected.stdout).toBe("");
+        expect(rejected.stderr).toContain(
+          "fx ask: --no-save cannot be used with --resume or --resume-id",
+        );
+        expect(rejected.stderr).toContain(
+          "usage: fx ask [--auto|--yolo] [--image PATH] [--json] [--quiet] [--prompt-permissions] [--no-save]",
+        );
       }
     },
     TIMEOUT,

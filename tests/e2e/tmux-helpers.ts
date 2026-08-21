@@ -11,28 +11,27 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, REPO_ROOT } from "../evals/eval-helpers";
+import {
+  FAKE_DIRECT_MODEL,
+  adaptRetiredGatewayTestEnv,
+} from "./direct-provider-env";
 
 let sessionCounter = 0;
 
-export const FAKE_GATEWAY_MODEL = "openai/gpt-5";
+export const FAKE_GATEWAY_MODEL = FAKE_DIRECT_MODEL;
 const TMUX_CAPTURE_MAX_BUFFER = 32 * 1024 * 1024;
 const TMUX_HEX_CHUNK_BYTES = 256;
 const COMPOSER_LINE = /^[ \t]*(?:┃|❯|>)(?:[ \t]|$)/;
 const AUTH_ENV_KEYS = [
-  "AI_GATEWAY_API_KEY",
-  "VERCEL_OIDC_TOKEN",
+  "ANTHROPIC_API_KEY",
 ] as const;
 const DEFAULT_UNSET_ENV_KEYS = [
   ...AUTH_ENV_KEYS,
-  "FX_E2E_GATEWAY_CHAT_URL",
-  "FX_E2E_GATEWAY_MODELS_URL",
-  "FX_E2E_GATEWAY_CREDITS_URL",
+  "ANTHROPIC_BASE_URL",
   "FX_E2E_UPGRADE_BASE_URL",
   "FX_PERMISSION_MODE",
 ] as const;
 const MIRRORED_ENV_KEYS = [
-  "FX_GATEWAY_BASE_URL",
-  "FX_GATEWAY_CHAT_URL",
   "FX_MAX_AGENT_STEPS",
   "FX_MODEL",
 ] as const;
@@ -122,11 +121,106 @@ export function hasEmptyComposer(pane: string): boolean {
   return pane.split("\n").some(isEmptyComposerLine);
 }
 
+function sseData(payload: object): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+function anthropicSseFromLegacyEvents(events: object[]): string {
+  const parts = [
+    sseData({
+      type: "message_start",
+      message: {
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        content: [],
+        model: FAKE_GATEWAY_MODEL,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }),
+  ];
+  let textOpen = false;
+  let nextIndex = 0;
+  const closeText = () => {
+    if (!textOpen) return;
+    parts.push(sseData({ type: "content_block_stop", index: 0 }));
+    textOpen = false;
+  };
+  for (const event of events) {
+    const item = event as {
+      type?: string;
+      delta?: string;
+      toolCallId?: string;
+      toolName?: string;
+      input?: unknown;
+      finishReason?: { unified?: string; raw?: string };
+      usage?: { outputTokens?: { total?: number } };
+    };
+    if (item.type === "text-delta") {
+      if (!textOpen) {
+        parts.push(sseData({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        }));
+        textOpen = true;
+        nextIndex = Math.max(nextIndex, 1);
+      }
+      parts.push(sseData({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: item.delta ?? "" },
+      }));
+      continue;
+    }
+    if (item.type === "tool-call") {
+      closeText();
+      const index = nextIndex;
+      nextIndex += 1;
+      const input = typeof item.input === "string"
+        ? item.input
+        : JSON.stringify(item.input ?? {});
+      parts.push(sseData({
+        type: "content_block_start",
+        index,
+        content_block: {
+          type: "tool_use",
+          id: item.toolCallId ?? `tool_${index}`,
+          name: item.toolName ?? "unknown",
+          input: {},
+        },
+      }));
+      parts.push(sseData({
+        type: "content_block_delta",
+        index,
+        delta: { type: "input_json_delta", partial_json: input },
+      }));
+      parts.push(sseData({ type: "content_block_stop", index }));
+      continue;
+    }
+    if (item.type === "finish") {
+      closeText();
+      const raw = item.finishReason?.unified ?? item.finishReason?.raw ?? "stop";
+      const stop = raw === "tool-calls" || raw === "tool_use" ? "tool_use" : "end_turn";
+      parts.push(sseData({
+        type: "message_delta",
+        delta: { stop_reason: stop },
+        usage: { output_tokens: item.usage?.outputTokens?.total ?? 5 },
+      }));
+      parts.push(sseData({ type: "message_stop" }));
+      continue;
+    }
+    parts.push(sseData(event));
+  }
+  closeText();
+  parts.push("data: [DONE]\n\n");
+  return parts.join("");
+}
+
 export function fakeGatewaySse(events: object[]) {
-  return new Response(
-    `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
-    { headers: { "content-type": "text/event-stream" } },
-  );
+  return new Response(anthropicSseFromLegacyEvents(events), {
+    headers: { "content-type": "text/event-stream" },
+  });
 }
 
 export function fakeGatewayToolCall(
@@ -162,12 +256,21 @@ export function fakeGatewayPermissionDecision(
 }
 
 export function classifierEvidenceFromRequest(body: string): string {
-  const parsed = JSON.parse(body) as any;
-  const instruction = parsed.prompt.at(-1);
-  if (instruction?.role !== "system" || typeof instruction.content !== "string") {
+  const parsed = JSON.parse(body) as {
+    system?: string;
+    messages?: Array<{ role?: string; content?: unknown }>;
+    prompt?: Array<{ role?: string; content?: unknown }>;
+  };
+  if (typeof parsed.system === "string" && parsed.system.length > 0) {
+    return parsed.system;
+  }
+  const messages = parsed.messages ?? parsed.prompt ?? [];
+  const instruction = messages.at(-1);
+  if (instruction?.role !== "system" && instruction?.role !== "user") {
     throw new Error("classifier instruction missing");
   }
-  return instruction.content;
+  if (typeof instruction.content === "string") return instruction.content;
+  throw new Error("classifier instruction missing");
 }
 
 export function fakeGatewaySerializedToolCall(
@@ -232,17 +335,17 @@ export function heldFakeGatewayFinalText() {
       return;
     }
     stopTimer();
-    controller.enqueue(encoder.encode(
-      `data: ${JSON.stringify({ type: "text-delta", id: "answer_1", delta: text })}\n\n` +
-        `data: ${JSON.stringify({
-          type: "finish",
-          finishReason: { unified: "stop", raw: "stop" },
-          usage: {
-            inputTokens: { total: 3 },
-            outputTokens: { total: 5 },
-          },
-        })}\n\ndata: [DONE]\n\n`,
-    ));
+    controller.enqueue(encoder.encode(anthropicSseFromLegacyEvents([
+      { type: "text-delta", id: "answer_1", delta: text },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: {
+          inputTokens: { total: 3 },
+          outputTokens: { total: 5 },
+        },
+      },
+    ])));
     close();
   };
   const createResponse = () => new Response(
@@ -437,7 +540,7 @@ export class TmuxSession {
     const {
       cmd = FX_BIN,
       cwd = REPO_ROOT,
-      env = {},
+      env: rawEnv = {},
       width = 120,
       height = 40,
       stderrPath,
@@ -447,6 +550,7 @@ export class TmuxSession {
       isolated = false,
       socketName,
     } = opts ?? {};
+    const env = adaptRetiredGatewayTestEnv(rawEnv);
 
     if (
       minimumHistoryLines !== undefined &&

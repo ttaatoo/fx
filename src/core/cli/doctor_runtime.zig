@@ -10,6 +10,7 @@ const sandbox = @import("../permissions/sandbox.zig");
 const session_store = @import("../session/session_store.zig");
 const types = @import("../shared/types.zig");
 const model_provider = @import("../config/model_provider.zig");
+const app_lifecycle = @import("../app/app_lifecycle.zig");
 
 const Allocator = std.mem.Allocator;
 const default_session_diagnostics_limit: usize = 64;
@@ -110,10 +111,11 @@ pub fn collect(
         return snapshot;
     };
     defer detailed.deinit(alloc);
-    snapshot.provider = blk: {
-        const raw = detailed.settings.provider orelse break :blk model_provider.default_id;
-        break :blk if (model_provider.isRetired(raw)) model_provider.default_id else raw;
-    };
+    const resolved = try app_lifecycle.resolveStartupSelection(alloc, default_model, &detailed.settings);
+    snapshot.provider = resolved.provider;
+    if (snapshot.owned_model) |model| alloc.free(model);
+    snapshot.model = resolved.selected_model;
+    snapshot.owned_model = resolved.selected_model;
 
     snapshot.auth = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,
@@ -127,13 +129,9 @@ pub fn collect(
     try appendMcpConfigCheck(&checks, alloc, mcp_config_diagnostic);
     try appendAuthCheck(&checks, alloc, snapshot.auth);
     try appendResolvedStartupCheck(&snapshot, &checks, alloc, .{
-        .model = switch (snapshot.provider) {
-            .gateway, .anthropic, .xai => detailed.settings.model,
-            .codex => detailed.settings.codex_model,
-        },
         .permission_mode = detailed.settings.permission_mode,
         .max_agent_steps = detailed.settings.max_agent_steps,
-    }, default_model, default_agent_step_limit);
+    }, default_agent_step_limit);
     try appendStateChecks(&checks, alloc, snapshot.workspace_root);
     try appendGitCheck(&checks, alloc, snapshot.workspace_root);
     try appendGhCheck(&checks, alloc);
@@ -222,13 +220,8 @@ fn appendResolvedStartupCheck(
     checks: *std.ArrayList(Check),
     alloc: Allocator,
     settings: config_runtime.StartupStatusSettings,
-    default_model: []const u8,
     default_agent_step_limit: usize,
 ) !void {
-    const next_model = try resolveModel(alloc, default_model, settings.model);
-    if (snapshot.owned_model) |model| alloc.free(model);
-    snapshot.model = next_model.value;
-    snapshot.owned_model = next_model.owned;
     snapshot.permission_mode = try resolvePermissionMode(settings.permission_mode);
     snapshot.agent_step_limit = try resolveAgentStepLimit(default_agent_step_limit, settings.max_agent_steps);
 

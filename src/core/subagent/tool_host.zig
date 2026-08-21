@@ -3003,7 +3003,7 @@ fn testOptions(caller_id: []const u8, invocation_id: []const u8) ExecuteOptions 
         .caller_id = caller_id,
         .invocation_id = invocation_id,
         .defaults = .{
-            .provider = .gateway,
+            .provider = .xai,
             .model = "test/model",
             .effort = types.ReasoningEffort.literal("high"),
             .conversation_language = session.ConversationLanguage.literal("en"),
@@ -3017,7 +3017,7 @@ fn testHumanOptions(invocation_id: []const u8) HumanCommandOptions {
     return .{
         .invocation_id = invocation_id,
         .defaults = .{
-            .provider = .gateway,
+            .provider = .xai,
             .model = "test/model",
             .effort = types.ReasoningEffort.literal("high"),
             .conversation_language = session.ConversationLanguage.literal("en"),

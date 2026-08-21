@@ -90,7 +90,7 @@ pub const ProviderEntry = struct {
         return switch (self.provider) {
             .anthropic => self.resolvedApiKey() != null,
             .xai => grok_session.sourceExists(alloc) catch false,
-            .gateway, .codex => false,
+            .codex => false,
         };
     }
 
@@ -216,6 +216,7 @@ pub fn loadFromHome(alloc: Allocator) !Catalog {
 }
 
 pub const default_xai_model_ids = [_][]const u8{ "grok-4.6", "grok-code-fast-1" };
+pub const default_anthropic_model_ids = [_][]const u8{ "claude-opus-4-6", "claude-sonnet-4-6" };
 
 pub fn loadFromHomeDir(alloc: Allocator, home: []const u8) !Catalog {
     const providers_path = try profile_paths.providersPath(alloc, home);
@@ -225,6 +226,7 @@ pub fn loadFromHomeDir(alloc: Allocator, home: []const u8) !Catalog {
         var catalog = try parseProvidersDocument(alloc, bytes);
         errdefer catalog.deinit();
         try ensureDefaultXai(&catalog);
+        try ensureDefaultAnthropic(&catalog);
         return catalog;
     } else |err| switch (err) {
         error.FileNotFound => {},
@@ -238,6 +240,7 @@ pub fn loadFromHomeDir(alloc: Allocator, home: []const u8) !Catalog {
         var catalog = try parseProvidersDocument(alloc, bytes);
         errdefer catalog.deinit();
         try ensureDefaultXai(&catalog);
+        try ensureDefaultAnthropic(&catalog);
         return catalog;
     } else |err| switch (err) {
         error.FileNotFound => {},
@@ -246,6 +249,7 @@ pub fn loadFromHomeDir(alloc: Allocator, home: []const u8) !Catalog {
     var catalog = Catalog.empty(alloc);
     errdefer catalog.deinit();
     try ensureDefaultXai(&catalog);
+    try ensureDefaultAnthropic(&catalog);
     return catalog;
 }
 
@@ -319,19 +323,16 @@ pub fn overlayStartupSelection(
         }
         return .{ .provider = fallback.provider, .model = process_model };
     }
-    const product_explicit = provider_explicit and !model_provider.isRetired(fallback.provider);
+    const product_explicit = provider_explicit;
     if (!product_explicit) {
         if (catalog.preferredUsable()) |hit| {
             if (std.mem.eql(u8, process_model, fallback.model)) {
                 return .{ .provider = hit.provider.provider, .model = hit.model_id };
             }
         }
-        if (model_provider.isRetired(fallback.provider)) {
-            return .{ .provider = model_provider.default_id, .model = process_model };
-        }
     }
     return .{
-        .provider = if (model_provider.isRetired(fallback.provider)) model_provider.default_id else fallback.provider,
+        .provider = fallback.provider,
         .model = process_model,
     };
 }
@@ -371,6 +372,12 @@ fn ensureDefaultXai(catalog: *Catalog) !void {
     try appendDefaultXai(catalog);
 }
 
+fn ensureDefaultAnthropic(catalog: *Catalog) !void {
+    if (catalog.findByProvider(.anthropic) != null) return;
+    if (nonEmptyEnv("ANTHROPIC_API_KEY") == null) return;
+    try appendDefaultAnthropic(catalog);
+}
+
 fn appendDefaultXai(catalog: *Catalog) !void {
     const models = try catalog.alloc.alloc(ModelRef, default_xai_model_ids.len);
     errdefer catalog.alloc.free(models);
@@ -389,6 +396,30 @@ fn appendDefaultXai(catalog: *Catalog) !void {
         .api = .openai_completions,
         .base_url = try retain(catalog, grok_oauth.chat_proxy_base_url),
         .api_key_spec = null,
+        .models = models,
+    };
+    catalog.entries = new_entries;
+}
+
+fn appendDefaultAnthropic(catalog: *Catalog) !void {
+    const models = try catalog.alloc.alloc(ModelRef, default_anthropic_model_ids.len);
+    errdefer catalog.alloc.free(models);
+    for (default_anthropic_model_ids, 0..) |id, i| {
+        models[i] = .{ .id = try retain(catalog, id) };
+    }
+    const new_entries = try catalog.alloc.alloc(ProviderEntry, catalog.entries.len + 1);
+    errdefer catalog.alloc.free(new_entries);
+    if (catalog.entries.len > 0) {
+        @memcpy(new_entries[0..catalog.entries.len], catalog.entries);
+        catalog.alloc.free(catalog.entries);
+    }
+    const base_url = nonEmptyEnv("ANTHROPIC_BASE_URL") orelse "https://api.anthropic.com";
+    new_entries[new_entries.len - 1] = .{
+        .id = try retain(catalog, "anthropic"),
+        .provider = .anthropic,
+        .api = .anthropic_messages,
+        .base_url = try retain(catalog, base_url),
+        .api_key_spec = try retain(catalog, "$ANTHROPIC_API_KEY"),
         .models = models,
     };
     catalog.entries = new_entries;
@@ -573,7 +604,7 @@ test "startup overlay prefers FX_MODEL matches and usable direct providers" {
 
     const matched = overlayStartupSelection(
         &catalog,
-        .{ .provider = .gateway, .model = "zai/glm-5.2" },
+        .{ .provider = .xai, .model = "zai/glm-5.2" },
         "claude-opus-4-6",
         false,
     );
@@ -582,7 +613,7 @@ test "startup overlay prefers FX_MODEL matches and usable direct providers" {
 
     const auto = overlayStartupSelection(
         &catalog,
-        .{ .provider = .gateway, .model = "zai/glm-5.2" },
+        .{ .provider = .xai, .model = "zai/glm-5.2" },
         "zai/glm-5.2",
         false,
     );
@@ -592,7 +623,7 @@ test "startup overlay prefers FX_MODEL matches and usable direct providers" {
     try environ.put("AI_GATEWAY_API_KEY", "gateway-key");
     const ignore_gateway_key = overlayStartupSelection(
         &catalog,
-        .{ .provider = .gateway, .model = "zai/glm-5.2" },
+        .{ .provider = .xai, .model = "zai/glm-5.2" },
         "zai/glm-5.2",
         false,
     );
@@ -601,7 +632,7 @@ test "startup overlay prefers FX_MODEL matches and usable direct providers" {
 
     const keep_env_model = overlayStartupSelection(
         &catalog,
-        .{ .provider = .gateway, .model = "zai/glm-5.2" },
+        .{ .provider = .xai, .model = "zai/glm-5.2" },
         "env-model",
         false,
     );
@@ -639,12 +670,40 @@ test "startup overlay selects SuperGrok when an OAuth session is present" {
 
     const auto = overlayStartupSelection(
         &catalog,
-        .{ .provider = .gateway, .model = "zai/glm-5.2" },
+        .{ .provider = .xai, .model = "zai/glm-5.2" },
         "zai/glm-5.2",
         false,
     );
     try std.testing.expectEqual(model_provider.ProviderId.xai, auto.provider);
     try std.testing.expectEqualStrings("grok-4.6", auto.model);
+}
+
+test "ANTHROPIC_API_KEY without providers.json yields an anthropic catalog entry" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+
+    var environ = std.process.Environ.Map.init(alloc);
+    defer environ.deinit();
+    try environ.put("HOME", home);
+    try environ.put("ANTHROPIC_API_KEY", "sk-ant-default");
+    io_mod.setEnvironMap(&environ);
+    const restore_env = try stableEmptyTestEnviron();
+    defer io_mod.setEnvironMap(restore_env);
+
+    var catalog = try loadFromHomeDir(alloc, home);
+    defer catalog.deinit();
+    const entry = catalog.findByProvider(.anthropic) orelse return error.TestExpectedAnthropicEntry;
+    try std.testing.expectEqualStrings("anthropic", entry.id);
+    try std.testing.expectEqual(ApiKind.anthropic_messages, entry.api);
+    try std.testing.expectEqualStrings("https://api.anthropic.com", entry.resolvedBaseUrl());
+    try std.testing.expectEqualStrings("sk-ant-default", entry.resolvedApiKey().?);
+    try std.testing.expectEqual(@as(usize, 2), entry.models.len);
+    try std.testing.expectEqualStrings("claude-opus-4-6", entry.models[0].id);
+    try std.testing.expectEqualStrings("claude-sonnet-4-6", entry.models[1].id);
 }
 
 test "endpoint joining and URL allowlist" {

@@ -210,10 +210,6 @@ pub fn missingCredentialMessage(provider: model_provider.ProviderId, surface: Mi
             .cli => missing_grok_credential_message,
             .interactive => missing_grok_interactive_credential_message,
         },
-        .gateway => switch (surface) {
-            .cli => missing_grok_credential_message,
-            .interactive => missing_grok_interactive_credential_message,
-        },
     };
 }
 

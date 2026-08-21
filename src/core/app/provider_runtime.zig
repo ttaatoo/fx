@@ -81,7 +81,7 @@ pub fn provider(app: anytype) model_provider.ProviderId {
         return app.selected_provider;
     }
     if (comptime builtin.is_test and @hasField(App, "selected_model")) {
-        return .gateway;
+        return .xai;
     }
     @compileError("app must own provider_selection");
 }
@@ -123,11 +123,11 @@ test "provider runtime adopts an owned selection without a fallible publication"
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
 
-    var gateway_model = try alloc.dupe(u8, "gateway/model");
-    runtime.adoptOwned(.gateway, &gateway_model);
-    try std.testing.expectEqual(@as(usize, 0), gateway_model.len);
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, runtime.selection().provider);
-    try std.testing.expectEqualStrings("gateway/model", runtime.selection().model);
+    var xai_model = try alloc.dupe(u8, "xai/model");
+    runtime.adoptOwned(.xai, &xai_model);
+    try std.testing.expectEqual(@as(usize, 0), xai_model.len);
+    try std.testing.expectEqual(model_provider.ProviderId.xai, runtime.selection().provider);
+    try std.testing.expectEqualStrings("xai/model", runtime.selection().model);
 
     var codex_model = try alloc.dupe(u8, "gpt-model");
     runtime.adoptOwned(.codex, &codex_model);

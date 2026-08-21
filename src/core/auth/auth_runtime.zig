@@ -368,7 +368,7 @@ pub const PickerView = struct {
     available_sources: SourceSet,
     selected_choice: ?Choice,
     active_source: ?credentials.Source,
-    active_provider: model_provider.ProviderId = .gateway,
+    active_provider: model_provider.ProviderId = .xai,
     include_skip: bool,
     stage: PickerStage = .root,
     fx_login_session_available: bool = false,
@@ -452,7 +452,7 @@ pub const PickerView = struct {
             .provider => |provider| model_provider.label(provider),
             .source => |source| credentials.sourceLabel(source),
             .action => |action| switch (action) {
-                .login => "Sign in with Vercel",
+                .login => "Retired Gateway sign-in",
                 .chatgpt_login => "Sign in with Codex",
                 .grok_login => "Sign in with SuperGrok",
                 .setup => if (self.include_skip) "Add an API key" else "API key",
@@ -725,7 +725,7 @@ pub const Runtime = struct {
     picker_selection: ?Choice = null,
     picker_include_skip: bool = false,
     picker_stage: PickerStage = .root,
-    provider_picker_active: model_provider.ProviderId = .gateway,
+    provider_picker_active: model_provider.ProviderId = .xai,
     fx_login_session_available: bool = false,
     team_selection: ?login_flow.TeamSelection = null,
     team_query: std.ArrayList(u8) = .empty,
@@ -1378,17 +1378,6 @@ pub const Runtime = struct {
                     loadRuntimeCredentialSource,
                 ),
             .anthropic => self.selectDirectProvider(alloc, provider),
-            .gateway => if (self.credentialSource() != .chatgpt_subscription and
-                self.credentialSource() != .custom_provider and
-                self.credentialSource() != .grok_subscription)
-                false
-            else
-                @as(?bool, try self.reselectByPrecedenceWithDeps(
-                    alloc,
-                    self,
-                    probeCredentialSource,
-                    loadRuntimeCredentialSource,
-                )),
         };
     }
 
@@ -2536,7 +2525,9 @@ test "auth runtime saves and reloads through its injected secret store" {
         if (runtime.takeApiKeySaveResult(alloc)) |value| break value;
     };
 
-    try std.testing.expect(result == .saved);
+    // Stored Gateway keys are retired: validate and persist still run, but reload
+    // cannot adopt a stored_key credential.
+    try std.testing.expect(result == .reload_failed);
     try std.testing.expectEqual(@as(usize, 1), fixture.validate_calls);
     try std.testing.expectEqual(@as(usize, 1), fixture.store_calls);
     try std.testing.expect(runtime.credentialSource() == null);

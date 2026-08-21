@@ -205,7 +205,7 @@ const AcpContext = struct {
 
     fn toolContext(self: *AcpContext) tool_runtime.Context {
         const session = if (self.state.active_session) |*active| active else unreachable;
-        const gateway_features_allowed = model_provider.usesGatewayAuxiliaries(session.provider);
+        const gateway_features_allowed = false;
         if (gateway_features_allowed) {
             self.state.web_search_runtime.configure(.{
                 .api_key = session.api_key,
@@ -248,7 +248,6 @@ const AcpContext = struct {
             .permission_rules = session.permission_rules,
             .tool_registry = self.toolRegistry(),
             .permission_reviewer_provider = switch (session.provider) {
-                .gateway => self.state.cfg.permission_reviewer_provider,
                 .codex => self.state.cfg.codex_permission_reviewer_provider,
                 .anthropic, .xai => null,
             },
@@ -701,10 +700,6 @@ pub fn runSubagentChild(
         .host = subagent_host,
         .tool_context = ctx.toolContext(),
         .provider_routes = .{
-            .gateway = .{
-                .agent_stream_provider = server.streamProviderFor(state, .gateway),
-                .permission_reviewer_provider = state.cfg.permission_reviewer_provider,
-            },
             .codex = .{
                 .agent_stream_provider = server.streamProviderFor(state, .codex),
                 .permission_reviewer_provider = state.cfg.codex_permission_reviewer_provider,
@@ -3397,7 +3392,7 @@ fn initTestAcpState(alloc: Allocator, workspace_root: []const u8, mode: Permissi
         .credential_source = .ai_gateway_api_key,
         .sandbox_backend = selected_backend,
         .web_search_runtime = @import("../core/tooling/web_search_runtime.zig").Runtime.init(.{
-            .provider = cfg.gateway_provider.web_search,
+            .provider = null,
         }),
         .active_session = .{
             .session_id = session_id,
@@ -4409,8 +4404,7 @@ test "ACP prompt agent config carries request options from active session" {
     const tool_ctx = ctx.toolContext();
     try std.testing.expect(!tool_ctx.web_search_runtime_ready);
     try std.testing.expect(tool_ctx.web_search_backend != null);
-    try std.testing.expect(state.web_search_runtime.provider.?.execute_fn == state.cfg.gateway_provider.web_search.execute_fn);
-    try std.testing.expect(state.web_search_runtime.provider.?.preferred_backends_fn == state.cfg.gateway_provider.web_search.preferred_backends_fn);
+    try std.testing.expect(state.web_search_runtime.provider == null);
     try std.testing.expect(tool_ctx.web_fetch_runtime.? == &state.web_fetch_runtime);
     try std.testing.expectEqualStrings("team_123", tool_ctx.gateway_team.?);
     try std.testing.expectEqualStrings("team_123", state.web_search_runtime.gateway_team.?);

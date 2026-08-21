@@ -1202,19 +1202,19 @@ pub fn Runtime(comptime App: type) type {
 test "provider switch state machine no-ops rejects busy work and prepares only idle changes" {
     try std.testing.expectEqual(
         ProviderSwitchDecision.no_change,
-        decideProviderSwitch(.gateway, .gateway, true, 2),
+        decideProviderSwitch(.xai, .xai, true, 2),
     );
     try std.testing.expectEqual(
         ProviderSwitchDecision.busy,
-        decideProviderSwitch(.gateway, .codex, true, 0),
+        decideProviderSwitch(.xai, .codex, true, 0),
     );
     try std.testing.expectEqual(
         ProviderSwitchDecision.busy,
-        decideProviderSwitch(.gateway, .codex, false, 1),
+        decideProviderSwitch(.xai, .codex, false, 1),
     );
     try std.testing.expectEqual(
         ProviderSwitchDecision.prepare,
-        decideProviderSwitch(.gateway, .codex, false, 0),
+        decideProviderSwitch(.xai, .codex, false, 0),
     );
 }
 

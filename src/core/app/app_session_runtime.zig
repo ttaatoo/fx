@@ -350,7 +350,7 @@ pub const SessionPreferencePatch = struct {
         };
         if (self.provider) |provider| {
             switch (provider) {
-                .gateway, .anthropic, .xai => patch.model = self.model,
+                .anthropic, .xai => patch.model = self.model,
                 .codex => patch.codex_model = self.model,
             }
         } else {
@@ -5631,7 +5631,7 @@ test "js-host resume restores transcript context preferences usage and revision"
     defer app.deinit();
     try Runtime(TestApp).configureStartupPreferences(
         &app,
-        .gateway,
+        .xai,
         "startup/model",
         .user_global,
         "startup/model",
@@ -5687,7 +5687,7 @@ test "js-host resume store failures and missing records fall back to fresh sessi
         defer app.deinit();
         try Runtime(TestApp).configureStartupPreferences(
             &app,
-            .gateway,
+            .xai,
             "fresh/model",
             .user_global,
             "fresh/model",
@@ -5716,7 +5716,7 @@ test "js-host picker request stays unsupported and starts fresh" {
     defer app.deinit();
     try Runtime(TestApp).configureStartupPreferences(
         &app,
-        .gateway,
+        .xai,
         "fresh/model",
         .user_global,
         "fresh/model",
@@ -5741,7 +5741,7 @@ test "js-host completed and interrupted turns propagate revisions preserve owner
     defer app.deinit();
     try Runtime(TestApp).configureStartupPreferences(
         &app,
-        .gateway,
+        .xai,
         "fresh/model",
         .user_global,
         "fresh/model",
@@ -5808,7 +5808,7 @@ test "js-host preference changes snapshot the updated session preferences" {
     defer app.deinit();
     try Runtime(TestApp).configureStartupPreferences(
         &app,
-        .gateway,
+        .xai,
         "fresh/model",
         .user_global,
         "fresh/model",
@@ -5903,7 +5903,7 @@ fn testPaths(alloc: Allocator, tmp: *std.testing.TmpDir) !struct { home: []u8, w
 fn configureTestPreferences(app: *TestApp) !void {
     try Runtime(TestApp).configureStartupPreferences(
         app,
-        .gateway,
+        .xai,
         "configured/model",
         .user_workspace,
         "configured/model",
@@ -7339,7 +7339,7 @@ test "upgrade resume restores active session with the installed version notice" 
     try configureTestPreferences(&app);
     try Runtime(TestApp).configureStartupPreferences(
         &app,
-        .gateway,
+        .xai,
         "configured/model",
         .process_override,
         "env/model",
@@ -8816,7 +8816,7 @@ test "fresh interactive session retains one writable schema-v3 handle" {
 
     try Runtime(TestApp).configureStartupPreferences(
         &app,
-        .gateway,
+        .xai,
         "configured/model",
         .user_workspace,
         "configured/model",

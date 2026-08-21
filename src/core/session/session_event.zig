@@ -1454,7 +1454,7 @@ fn parsePreferences(alloc: Allocator, value: std.json.Value) !session_codec.Dura
         .provider = if (object.get("provider")) |provider_value| blk: {
             if (provider_value != .string) return error.InvalidEventFrame;
             break :blk model_provider.parse(provider_value.string) orelse return error.InvalidEventFrame;
-        } else .gateway,
+        } else .xai,
         .model = model,
         .effort = types.ReasoningEffort.parse(
             try requireString(object, "effort"),

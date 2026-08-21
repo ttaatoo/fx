@@ -8,7 +8,7 @@ const gateway_provider = @import("../core/gateway/gateway_provider.zig");
 const io_mod = @import("../core/shared/io.zig");
 const types = @import("../core/shared/types.zig");
 const grok_oauth = @import("../core/auth/grok_oauth.zig");
-const gateway_client = @import("client.zig");
+const gateway_client = @import("http.zig");
 const anthropic_messages = @import("anthropic_messages.zig");
 const openai_completions = @import("openai_completions.zig");
 

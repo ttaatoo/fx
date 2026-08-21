@@ -4,13 +4,11 @@ const acp_server = @import("acp/server.zig");
 const jsonrpc = @import("acp/jsonrpc.zig");
 const background_process_provider = @import("core/execution/background_process_provider.zig");
 const gateway_provider = @import("core/gateway/gateway_provider.zig");
-const generation_usage_provider = @import("core/session/generation_usage_provider.zig");
 const host = @import("core/hosts/host.zig");
 const debug_trace = @import("core/shared/debug_trace.zig");
 const io_mod = @import("core/shared/io.zig");
 const fetch_state = @import("napi_fetch_state.zig");
 const streamable_http = @import("core/mcp/streamable_http.zig");
-const host_stream_provider = @import("gateway/host_stream_provider.zig");
 const oauth_transport = @import("core/auth/oauth_transport.zig");
 const builtin_context = @import("builtins/context.zig");
 const builtin_gateway = @import("builtins/gateway.zig");
@@ -405,7 +403,6 @@ const FetchOperationResult = enum(u8) {
 const Runtime = struct {
     alloc: Allocator,
     fetch: FetchBridge = .{},
-    stream_context: host_stream_provider.ProviderContext = undefined,
     input: InputQueue = .{},
     output: OutputQueue = .{},
     credential: []u8,
@@ -433,13 +430,8 @@ const Runtime = struct {
 
     fn run(self: *Runtime) void {
         const provider = gateway_provider.Provider{
-            .agent_stream = host_stream_provider.provider(&self.stream_context),
             .oauth_transport = oauth_transport.unavailable_provider,
-            .chat_url = builtin_gateway.provider.chat_url,
             .cli_model_catalog = builtin_gateway.provider.cli_model_catalog,
-            .credits = builtin_gateway.provider.credits,
-            .generation_usage = generation_usage_provider.unavailable_provider,
-            .web_search = builtin_gateway.provider.web_search,
             .model_catalog = builtin_gateway.provider.model_catalog,
         };
         acp_server.runWithTransport(
@@ -637,10 +629,10 @@ fn createRuntime(env: c.napi_env, options: c.napi_value) CreateError!*Runtime {
     const gateway_chat_url = (getNamedString(env, options, "gatewayChatUrl", alloc, max_url_bytes) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.InvalidGatewayUrl,
-    }) orelse (alloc.dupe(u8, builtin_gateway.default_chat_url) catch return error.OutOfMemory);
+    }) orelse (alloc.dupe(u8, builtin_gateway.defaultChatUrl()) catch return error.OutOfMemory);
     errdefer alloc.free(gateway_chat_url);
-    streamable_http.validateEndpoint(gateway_chat_url) catch return error.InvalidGatewayUrl;
-    if (!std.mem.eql(u8, gateway_chat_url, builtin_gateway.default_chat_url)) {
+    if (gateway_chat_url.len > 0) {
+        streamable_http.validateEndpoint(gateway_chat_url) catch return error.InvalidGatewayUrl;
         const uri = std.Uri.parse(gateway_chat_url) catch return error.InvalidGatewayUrl;
         if (!std.ascii.eqlIgnoreCase(uri.scheme, "http")) return error.InvalidGatewayUrl;
     }
@@ -656,13 +648,6 @@ fn createRuntime(env: c.napi_env, options: c.napi_value) CreateError!*Runtime {
         .gateway_chat_url = gateway_chat_url,
         .thread = undefined,
     };
-    runtime.stream_context = host_stream_provider.initContext(builtin_gateway.buildAgentRequest, .{
-        .context = &runtime.fetch,
-        .open_fn = FetchBridge.open,
-        .status_fn = FetchBridge.statusFn,
-        .next_fn = FetchBridge.next,
-        .close_fn = FetchBridge.close,
-    });
     runtime.thread = std.Thread.spawn(.{}, Runtime.run, .{runtime}) catch return error.ThreadFailed;
     return runtime;
 }

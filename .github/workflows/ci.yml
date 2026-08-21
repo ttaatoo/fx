@@ -191,10 +191,6 @@ jobs:
         run: bun test acp.test.ts
         working-directory: tests/e2e
 
-      - name: Run legacy stdio MCP tool lifecycle test
-        run: bun test gateway-stream-lifecycle.test.ts --test-name-pattern "selected dynamic MCP automatic review asks with zero sends and allows exactly once"
-        working-directory: tests/e2e
-
       - name: Run stdio MCP dispatcher lifecycle tests
         run: bun test mcp-stdio.test.ts
         working-directory: tests/e2e
@@ -217,26 +213,15 @@ jobs:
         run: bun test config-persistence.test.ts session-recovery.test.ts prompt-history.test.ts
         working-directory: tests/e2e
 
-      - name: Run gateway lifecycle recovery regressions
-        run: bun test ./gateway-stream-lifecycle.test.ts --test-name-pattern "saved malformed recovery resumes without re-executing the historical call|OS filesystem access denial reaches the next gateway request"
-        working-directory: tests/e2e
-
       - name: Run lean Auto Mode reliability contract
         run: bun test auto-mode-reliability.test.ts
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
-      - name: Run Vision route and headless SIGINT regressions
-        run: |
-          bun test vision-route-fake-gateway.test.ts
-          bun test ./tui-command-permissions.test.ts --test-name-pattern "fx ask SIGINT during classifier wait terminates before decision or execution"
+      - name: Run headless SIGINT regressions
+        run: bun test ./tui-command-permissions.test.ts --test-name-pattern "fx ask SIGINT during classifier wait terminates before decision or execution"
         working-directory: tests/e2e
-        env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
 
       - name: Run TUI input line deletion regression
         run: |
@@ -244,8 +229,6 @@ jobs:
           bun test tui-input-line-delete.test.ts
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
       - name: Run multiline input navigation TUI tests
@@ -254,8 +237,6 @@ jobs:
           bun test tui-input-navigation.test.ts
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
       - name: Run valid question recovery TUI regression
@@ -264,19 +245,15 @@ jobs:
           bun test ./tui-decision-prompts.test.ts --test-name-pattern "valid serialized ask control with matching identity opens the question and continues"
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
-      - name: Run streamed lifecycle, direct-write, and command scrollback regressions
+      - name: Run direct-write and command scrollback regressions
         run: |
           tmux -V
-          bun test tui-gateway-stream-lifecycle.test.ts tui-direct-write-audit.test.ts
+          bun test tui-direct-write-audit.test.ts
           bun test ./tui-command-permissions.test.ts --test-name-pattern "TUI preserves completed transcript when a later auto-approved command starts|TUI isolates approved foreground commands from terminal ownership"
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
   e2e:
@@ -371,8 +348,6 @@ jobs:
       - name: Run full ACP tests
         run: bun test acp.test.ts
         working-directory: tests/e2e
-        env:
-          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
 
   e2e-acp-full:
     name: E2E ACP (full)
