@@ -271,7 +271,7 @@ pub fn overlayStartupSelection(
     }
     if (!provider_explicit) {
         if (nonEmptyEnv("AI_GATEWAY_API_KEY") != null or nonEmptyEnv("VERCEL_OIDC_TOKEN") != null) {
-            return fallback;
+            return .{ .provider = fallback.provider, .model = process_model };
         }
         if (catalog.firstUsable()) |hit| {
             if (std.mem.eql(u8, process_model, fallback.model)) {
@@ -512,6 +512,16 @@ test "startup overlay prefers FX_MODEL matches and usable direct providers" {
         false,
     );
     try std.testing.expectEqual(model_provider.ProviderId.gateway, keep_gateway.provider);
+    try std.testing.expectEqualStrings("zai/glm-5.2", keep_gateway.model);
+
+    const keep_env_model = overlayStartupSelection(
+        &catalog,
+        .{ .provider = .gateway, .model = "zai/glm-5.2" },
+        "env-model",
+        false,
+    );
+    try std.testing.expectEqual(model_provider.ProviderId.gateway, keep_env_model.provider);
+    try std.testing.expectEqualStrings("env-model", keep_env_model.model);
 }
 
 test "endpoint joining and URL allowlist" {

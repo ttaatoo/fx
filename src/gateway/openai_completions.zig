@@ -167,7 +167,7 @@ pub fn consumeSse(
     var content: std.ArrayList(u8) = .empty;
     errdefer content.deinit(alloc);
     var tools: std.ArrayList(ToolAccumulator) = .empty;
-    errdefer {
+    defer {
         for (tools.items) |*tool| tool.deinit(alloc);
         tools.deinit(alloc);
     }
