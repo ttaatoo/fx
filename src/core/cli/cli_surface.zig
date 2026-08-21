@@ -28,7 +28,6 @@ const background_process_provider = @import(
 const github_publish = @import("../github/github_publish.zig");
 const github_workflows = @import("../github/github_workflows.zig");
 const host = @import("../hosts/host.zig");
-const login_flow = @import("../auth/login_flow.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
 const secret = @import("../auth/secret.zig");
@@ -216,6 +215,7 @@ const LocalSurfaceOptions = struct {
 fn parseLoginProvider(rest: []const [:0]const u8) !?provider_catalog.Id {
     if (rest.len == 0) return null;
     if (rest.len != 1) return error.InvalidLoginProviderArgs;
+    if (provider_catalog.isRetiredLoginName(rest[0])) return error.RetiredGatewayLogin;
     return provider_catalog.parse(rest[0]) orelse error.InvalidLoginProviderArgs;
 }
 
@@ -746,7 +746,7 @@ fn runNonInteractiveWithDeps(
                 .default_model = cfg.default_model,
                 .default_agent_step_limit = cfg.default_agent_step_limit,
                 .gateway_retry_count = cfg.gateway_retry_count,
-                .gateway_chat_url = cfg.gateway_provider.chat_url.resolve(cfg.gateway_chat_url),
+                .gateway_chat_url = cfg.gateway_chat_url,
                 .gateway_models_path = cfg.models_path,
                 .gateway_provider = cfg.gateway_provider,
                 .codex_agent_stream = cfg.codex_agent_stream,
@@ -778,27 +778,16 @@ fn runNonInteractiveWithDeps(
         .pr => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .pull_request),
         .issue => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .issue),
         .login => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx login [vercel|codex|grok]\n");
+            const maybe_login_provider = parseLoginProvider(rest) catch |err| {
+                if (err == error.RetiredGatewayLogin) {
+                    try writeStderr(deps, "fx login: Vercel AI Gateway is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+                    return .handled_failure;
+                }
+                try writeStderr(deps, "usage: fx login [grok|codex]\n");
                 return .handled_failure;
             };
-            // Preserve the original `fx login` behavior for scripts and users.
-            const login_provider = maybe_login_provider orelse .vercel;
+            const login_provider = maybe_login_provider orelse .grok;
             switch (login_provider) {
-                .vercel => login_flow.runLogin(
-                    alloc,
-                    cfg.gateway_provider.oauth_transport,
-                    cfg.url_opener,
-                ) catch |err| {
-                    const message = switch (err) {
-                        error.ClientIdMissing => "fx login: missing FX_OAUTH_CLIENT_ID; configure the fx Vercel App client id first\n",
-                        error.AccessDenied => "fx login: authorization denied\n",
-                        error.ExpiredToken, error.LoginTimedOut => "fx login: authorization expired; run fx login again\n",
-                        else => "fx login: failed to sign in\n",
-                    };
-                    try writeStderr(deps, message);
-                    return .handled_failure;
-                },
                 .codex => chatgpt_oauth.runLogin(
                     alloc,
                     cfg.gateway_provider.oauth_transport,
@@ -830,12 +819,15 @@ fn runNonInteractiveWithDeps(
             return .handled_success;
         },
         .logout => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx logout [vercel|codex|grok]\n");
+            const maybe_login_provider = parseLoginProvider(rest) catch |err| {
+                if (err == error.RetiredGatewayLogin) {
+                    try writeStderr(deps, "fx logout: Vercel AI Gateway is not supported. Use fx logout grok or fx logout codex.\n");
+                    return .handled_failure;
+                }
+                try writeStderr(deps, "usage: fx logout [grok|codex]\n");
                 return .handled_failure;
             };
-            // Preserve the original `fx logout` behavior for scripts and users.
-            const login_provider = maybe_login_provider orelse .vercel;
+            const login_provider = maybe_login_provider orelse .grok;
             if (login_provider == .codex) {
                 const outcome = chatgpt_oauth.logout() catch {
                     try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
@@ -880,52 +872,21 @@ fn runNonInteractiveWithDeps(
                     },
                 };
             }
-            const result = login_flow.logout(alloc, cfg.gateway_provider.oauth_transport) catch |err| switch (err) {
-                error.SessionDeleteFailed => {
-                    try writeStderr(deps, "fx logout: failed to durably remove saved Fx login\n");
-                    return .handled_failure;
-                },
-            };
-            if (result.local_durability_failed) {
-                try writeStderr(deps, "fx logout: failed to durably remove saved Fx login\n");
-            } else {
-                try writeStdout(
-                    deps,
-                    if (result.session_deleted) "Signed out of fx.\n" else "No fx login session found.\n",
-                );
-            }
-            if (result.remote_revocation_failed) {
-                try writeStderr(deps, login_flow.remote_revocation_warning);
-                try writeStderr(deps, "\n");
-            }
-            return if (result.local_durability_failed) .handled_failure else .handled_success;
+            try writeStderr(deps, "fx logout: Vercel AI Gateway is not supported. Use fx logout grok or fx logout codex.\n");
+            return .handled_failure;
         },
         .teams => |rest| {
-            if (rest.len != 0) {
-                try writeStderr(deps, "usage: fx teams\n");
-                return .handled_failure;
-            }
-            login_flow.runTeams(alloc, cfg.gateway_provider.oauth_transport) catch |err| {
-                const message = switch (err) {
-                    error.NoSession => "fx teams: run fx login first\n",
-                    error.SessionChanged => "fx teams: authentication changed; try again\n",
-                    error.TeamRequestFailed => "fx teams: failed to list Vercel teams\n",
-                    error.InvalidTeamSelection => "fx teams: no team selected\n",
-                    error.AccessDenied => "fx teams: authorization denied\n",
-                    else => "fx teams: failed to switch team\n",
-                };
-                try writeStderr(deps, message);
-                return .handled_failure;
-            };
-            return .handled_success;
+            _ = rest;
+            try writeStderr(deps, "fx teams: Vercel teams are not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+            return .handled_failure;
         },
         .provider => |rest| {
             if (rest.len != 1) {
-                try writeStderr(deps, "usage: fx provider <gateway|codex|anthropic|xai>\n");
+                try writeStderr(deps, "usage: fx provider <xai|anthropic|codex>\n");
                 return .handled_failure;
             }
-            const target = model_provider.parse(rest[0]) orelse {
-                try writeStderr(deps, "fx provider: expected gateway, codex, anthropic, or xai\n");
+            const target = model_provider.parseProduct(rest[0]) orelse {
+                try writeStderr(deps, "fx provider: expected xai, anthropic, or codex\n");
                 return .handled_failure;
             };
             const workspace_root = try io_mod.realpathAlloc(alloc, ".");
@@ -936,12 +897,12 @@ fn runNonInteractiveWithDeps(
                 return .handled_failure;
             };
             defer settings.deinit(alloc);
-            if ((settings.provider orelse .gateway) == target) {
+            const current = settings.provider orelse model_provider.default_id;
+            if (current == target) {
                 try writeStdout(deps, switch (target) {
                     .codex => "Codex is already selected.\n",
                     .anthropic => "Anthropic is already selected.\n",
                     .xai => "SuperGrok is already selected.\n",
-                    .gateway => "Gateway is already selected.\n",
                 });
                 return .handled_success;
             }
@@ -1042,16 +1003,16 @@ fn runNonInteractiveWithDeps(
                 .codex => "Provider set to Codex.\n",
                 .anthropic => "Provider set to Anthropic.\n",
                 .xai => "Provider set to SuperGrok.\n",
-                .gateway => "Provider set to Gateway.\n",
             });
             return .handled_success;
         },
         .setup => |rest| {
-            if (rest.len != 0) {
+            if (rest.len > 0) {
                 try writeTopLevelUsage(cfg.command_catalog, deps, .setup);
                 return .handled_failure;
             }
-            return if (try runPasteSetup(alloc, cfg.secret_store, deps)) .handled_success else .handled_failure;
+            try writeStderr(deps, "fx setup: AI Gateway API keys are not supported. Run fx login grok, or set ANTHROPIC_API_KEY in ~/.fx/providers.json.\n");
+            return .handled_failure;
         },
         .status => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
@@ -1532,36 +1493,15 @@ fn runNonInteractiveWithDeps(
             );
             defer startup.deinit(alloc);
             try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
-            if (model_provider.isDirect(startup.provider)) {
-                const message = "credits are a Vercel AI Gateway feature and are unavailable for direct providers";
-                if (opts.format == .json) {
-                    try writeJsonCommandFailureCode(alloc, deps, "credits", "Unavailable", message);
-                } else {
-                    try writeStderr(deps, "fx credits: ");
-                    try writeStderr(deps, message);
-                    try writeStderr(deps, "\n");
-                }
-                return .handled_failure;
+            const message = "credits are not available; this fork uses SuperGrok or Anthropic instead of Vercel AI Gateway";
+            if (opts.format == .json) {
+                try writeJsonCommandFailureCode(alloc, deps, "credits", "Unavailable", message);
+            } else {
+                try writeStderr(deps, "fx credits: ");
+                try writeStderr(deps, message);
+                try writeStderr(deps, "\n");
             }
-
-            var snapshot = cfg.gateway_provider.credits.fetch(alloc, .{
-                .credential = startup.apiKey(),
-                .credential_source = if (startup.credential) |credential| credential.source else null,
-                .tenant = startup.gatewayTeam(),
-            });
-            defer snapshot.deinit(alloc);
-            const text = try snapshot.render(alloc, opts.format);
-            defer alloc.free(text);
-            if (snapshot.err_message != null) {
-                if (opts.format == .json) {
-                    try writeFormattedOutput(deps, text, opts.format);
-                } else {
-                    try writeStderr(deps, text);
-                }
-                return .handled_failure;
-            }
-            try writeFormattedOutput(deps, text, opts.format);
-            return .handled_success;
+            return .handled_failure;
         },
         .usage => |rest| {
             const opts = parseUsageArgs(rest) catch |err| {
@@ -1753,53 +1693,6 @@ fn writeStdout(deps: RunDeps, text: []const u8) !void {
 
 fn writeStderr(deps: RunDeps, text: []const u8) !void {
     try deps.write_stderr(deps.stderr_ctx, text);
-}
-
-fn runPasteSetup(
-    alloc: Allocator,
-    secret_store: host.SecretStore,
-    deps: RunDeps,
-) !bool {
-    if (secret_store.isDisabled()) {
-        try writeStderr(deps, "fx setup: stored API keys are disabled by FX_DISABLE_KEYCHAIN\n");
-        return false;
-    }
-    if (!deps.setup_terminal_available(deps.setup_ctx)) {
-        try writeStderr(deps, "fx setup: an interactive terminal is required to paste an API key\n");
-        return false;
-    }
-
-    try writeStderr(deps, "Paste AI Gateway API key (input hidden): ");
-    const stored_interactively = secret_store.storeInteractive() catch {
-        try writeStderr(deps, "\nfx setup: API key was not saved\n");
-        return false;
-    };
-    if (!stored_interactively) {
-        const key = deps.read_masked_key(
-            deps.setup_ctx,
-            alloc,
-            deps.write_stderr,
-            deps.stderr_ctx,
-        ) catch {
-            try writeStderr(deps, "\nfx setup: API key was not saved\n");
-            return false;
-        };
-        defer secret.zeroAndFree(alloc, key);
-        try writeStderr(deps, "\n");
-        secret_store.store(alloc, key) catch {
-            try writeStderr(deps, "fx setup: API key was not saved\n");
-            return false;
-        };
-    }
-
-    const message = try std.fmt.allocPrint(
-        alloc,
-        "Saved API key to {s}.\n",
-        .{secret_store.backend_label},
-    );
-    defer alloc.free(message);
-    try writeStdout(deps, message);
-    return true;
 }
 
 fn setupTerminalAvailableDefault(_: ?*anyopaque) bool {
@@ -2952,7 +2845,7 @@ fn workflowConfig(cfg: Config) @import("cli_ask.zig").Config {
         .default_model = cfg.default_model,
         .default_agent_step_limit = cfg.default_agent_step_limit,
         .gateway_retry_count = cfg.gateway_retry_count,
-        .gateway_chat_url = cfg.gateway_provider.chat_url.resolve(cfg.gateway_chat_url),
+        .gateway_chat_url = cfg.gateway_chat_url,
         .gateway_models_path = cfg.models_path,
         .gateway_provider = cfg.gateway_provider,
         .codex_agent_stream = cfg.codex_agent_stream,
@@ -3641,6 +3534,16 @@ test "parse acp args extracts known flags and rejects invalid arguments" {
     );
 }
 
+fn optionalReviewerMatches(
+    actual: ?permission_auto_classifier.Provider,
+    expected: ?permission_auto_classifier.Provider,
+) bool {
+    if (actual == null and expected == null) return true;
+    const actual_provider = actual orelse return false;
+    const expected_provider = expected orelse return false;
+    return actual_provider.review_fn == expected_provider.review_fn;
+}
+
 test "ACP command routes parsed options and launch config through the injected runner" {
     const Capture = struct {
         expected: Config,
@@ -3656,13 +3559,8 @@ test "ACP command routes parsed options and launch config through the injected r
                 std.mem.eql(u8, cfg.default_model, expected.default_model) and
                 cfg.default_agent_step_limit == expected.default_agent_step_limit and
                 cfg.gateway_retry_count == expected.gateway_retry_count and
-                std.mem.eql(
-                    u8,
-                    cfg.gateway_chat_url,
-                    expected.gateway_provider.chat_url.resolve(expected.gateway_chat_url),
-                ) and
+                std.mem.eql(u8, cfg.gateway_chat_url, expected.gateway_chat_url) and
                 std.mem.eql(u8, cfg.gateway_models_path, expected.models_path) and
-                cfg.gateway_provider.chat_url.resolve_fn == expected.gateway_provider.chat_url.resolve_fn and
                 std.mem.eql(u8, cfg.prompt_policy.system_prompt, expected.prompt_policy.system_prompt) and
                 cfg.ignored_list_entries.len == expected.ignored_list_entries.len and
                 cfg.max_list_entries == expected.max_list_entries and
@@ -3679,7 +3577,7 @@ test "ACP command routes parsed options and launch config through the injected r
                 ) and
                 std.mem.eql(u8, cfg.mode_registry.default_mode_id, expected.mode_registry.default_mode_id) and
                 cfg.devbox_provider.?.execute_fn == expected.devbox_provider.?.execute_fn and
-                cfg.permission_reviewer_provider.?.review_fn == expected.permission_reviewer_provider.?.review_fn;
+                optionalReviewerMatches(cfg.permission_reviewer_provider, expected.permission_reviewer_provider);
 
             const limit_matches = cfg.context_limit_overrides.len == 1 and
                 cfg.context_limit_overrides[0].name == .project_instructions_total_bytes and
@@ -3698,7 +3596,7 @@ test "ACP command routes parsed options and launch config through the injected r
     };
 
     var cfg = testConfig();
-    cfg.permission_reviewer_provider = test_builtin_gateway.permission_reviewer.provider;
+    cfg.permission_reviewer_provider = null;
     var capture = Capture{ .expected = cfg };
     cfg.acp_runner = .{ .context = &capture, .run_fn = Capture.run };
     const result = try runIfRequestedWithDeps(
@@ -4229,52 +4127,9 @@ test "runIfRequested version flags reject extra args" {
     }
 }
 
-test "setup is a paste-only stored-key adapter" {
+test "setup rejects Gateway API-key onboarding" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_read_calls);
-    try std.testing.expect(capture.setup_value_matched);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Paste AI Gateway API key") != null);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel CLI") == null);
-    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), cfg.secret_store.backend_label) != null);
-}
-
-test "setup delegates secure input to an interactive host store" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    capture.setup_interactive_store = true;
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expect(!capture.setup_value_matched);
-}
-
-test "setup preserves the disabled secret-store failure" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    capture.setup_store_disabled = true;
     var cfg = testConfig();
     cfg.secret_store = capture.secretStore();
 
@@ -4288,10 +4143,8 @@ test "setup preserves the disabled secret-store failure" {
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqual(@as(usize, 0), capture.setup_store_calls);
     try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expectEqualStrings(
-        "fx setup: stored API keys are disabled by FX_DISABLE_KEYCHAIN\n",
-        capture.stderr.written(),
-    );
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "AI Gateway API keys are not supported") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fx login grok") != null);
 }
 
 test "workspace indeterminate errors report the reconciled durable state" {
@@ -4538,16 +4391,13 @@ test "workflow config does not carry placeholder gateway tools" {
     const skill_roots = [_]skill_contract.RootSpec{
         .{ .source = .workspace_shared, .path = "skills" },
     };
-    var chat_url_probe = ChatUrlProbe{};
     var surface_cfg = testConfig();
     surface_cfg.skill_root_policy.workspace_roots = &skill_roots;
-    surface_cfg.gateway_provider.chat_url = chat_url_probe.provider();
     const cfg = workflowConfig(surface_cfg);
     try std.testing.expect(!@hasField(@TypeOf(cfg), "gateway_tools_json"));
     try std.testing.expect(!@hasField(@TypeOf(cfg), "context_registry"));
     try std.testing.expectEqualStrings("test-model", cfg.default_model);
-    try std.testing.expectEqualStrings("http://127.0.0.1:43123/chat", cfg.gateway_chat_url);
-    try std.testing.expect(chat_url_probe.called);
+    try std.testing.expectEqualStrings("https://example.test/chat", cfg.gateway_chat_url);
     try std.testing.expectEqualStrings("surface", cfg.mode_registry.default_mode_id);
     try std.testing.expectEqualStrings("skills", cfg.skill_root_policy.workspace_roots[0].path);
     try std.testing.expect(cfg.load_mcp_runtime == noMcpRuntimeForTest);
@@ -4771,112 +4621,98 @@ test "runIfRequested bare version subcommand remains unknown" {
     try std.testing.expect(std.mem.startsWith(u8, capture.stderr.written(), "fx: unknown subcommand: version\n\n𝒇x v0.0.0\nFast, native coding agent for the terminal.\n"));
 }
 
-test "runIfRequested model fetch failure is handled" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    var probe = ModelFetchProbe{ .outcome = .failure };
-    var cfg = testConfig();
-    cfg.gateway_provider.cli_model_catalog = probe.provider();
+fn installIsolatedModelsHome(alloc: Allocator, tmp: *std.testing.TmpDir, providers_json: ?[]const u8) ![]u8 {
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    if (providers_json) |bytes| {
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/providers.json", .{});
+        try file.writeStreamingAll(io_mod.getIo(), bytes);
+        file.close(io_mod.getIo());
+    }
+    return io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+}
 
+test "runIfRequested models lists an empty catalog without configured providers" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try installIsolatedModelsHome(alloc, &tmp, null);
+    defer alloc.free(home);
+
+    var environ = std.process.Environ.Map.init(alloc);
+    defer environ.deinit();
+    try environ.put("HOME", home);
+    const stable_environ = try stableCliTestEnviron();
+    io_mod.setEnvironMap(&environ);
+    defer io_mod.setEnvironMap(stable_environ);
+
+    var capture = CaptureOutput.init(alloc);
+    defer capture.deinit();
     var deps = capture.deps();
     deps.load_startup_state = failingStartupState;
     deps.load_catalog_startup_state = stubLoadCatalogStartupState;
 
-    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("models")}, cfg, deps);
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    const result = try runIfRequestedWithDeps(alloc, &.{@constCast("models")}, testConfig(), deps);
+    try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "fx models: could not list models: Unavailable\n",
-        capture.stderr.written(),
+        "[models] no models returned by SuperGrok\n",
+        capture.stdout.written(),
     );
 }
 
-test "runIfRequested model fetch failure preserves json output" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    var probe = ModelFetchProbe{ .outcome = .failure };
-    var cfg = testConfig();
-    cfg.gateway_provider.cli_model_catalog = probe.provider();
+test "runIfRequested models lists configured providers as json" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try installIsolatedModelsHome(alloc, &tmp,
+        \\{"providers":{"xai":{"api":"openai-completions","models":[{"id":"grok-4.6"}]}}}
+    );
+    defer alloc.free(home);
 
+    var environ = std.process.Environ.Map.init(alloc);
+    defer environ.deinit();
+    try environ.put("HOME", home);
+    const stable_environ = try stableCliTestEnviron();
+    io_mod.setEnvironMap(&environ);
+    defer io_mod.setEnvironMap(stable_environ);
+
+    var capture = CaptureOutput.init(alloc);
+    defer capture.deinit();
     var deps = capture.deps();
     deps.load_catalog_startup_state = stubLoadCatalogStartupState;
 
     const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
+        alloc,
         &.{ @constCast("models"), @constCast("--json") },
-        cfg,
+        testConfig(),
         deps,
     );
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"error\":\"could not list models: Unavailable\",\"code\":\"Unavailable\"}\n",
+        "{\"kind\":\"models\",\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[\"grok-4.6\"],\"models\":[{\"id\":\"grok-4.6\",\"source\":\"SuperGrok\"}]}\n",
         capture.stdout.written(),
     );
     try std.testing.expectEqualStrings("", capture.stderr.written());
 }
 
-test "runIfRequested model provider cancellation is handled" {
+test "runIfRequested login vercel is rejected" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
-    var probe = ModelFetchProbe{ .outcome = .cancelled };
-    var cfg = testConfig();
-    cfg.gateway_provider.cli_model_catalog = probe.provider();
 
-    var deps = capture.deps();
-    deps.load_catalog_startup_state = stubLoadCatalogStartupState;
-
-    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("models")}, cfg, deps);
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("login"), @constCast("vercel") },
+        testConfig(),
+        capture.deps(),
+    );
     try std.testing.expectEqual(RunResult.handled_failure, result);
-    try std.testing.expectEqualStrings(
-        "fx models: could not list models: the request was cancelled\n",
-        capture.stderr.written(),
-    );
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel AI Gateway is not supported") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fx login grok") != null);
 }
 
-test "runIfRequested models passes startup team to fetch seam" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    var probe = ModelFetchProbe{};
-    var cfg = testConfig();
-    cfg.gateway_provider.cli_model_catalog = probe.provider();
-
-    var deps = capture.deps();
-    deps.load_catalog_startup_state = stubLoadCatalogStartupState;
-
-    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("models"), @constCast("--json") }, cfg, deps);
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expect(probe.called);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[\"private/blue-hornbill\"]}\n",
-        capture.stdout.written(),
-    );
-}
-
-test "runIfRequested credits renders through the configured provider" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    var probe = CreditsProviderProbe{ .outcome = .success };
-    var cfg = testConfig();
-    cfg.gateway_provider.credits = probe.provider();
-
-    var deps = capture.deps();
-    deps.load_startup_state = stubLoadStartupState;
-
-    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("credits"), @constCast("--json") }, cfg, deps);
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), probe.calls);
-    try std.testing.expect(probe.saw_expected_input);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"balance\":\"10\",\"used\":\"2\",\"plan\":\"pro\"}\n",
-        capture.stdout.written(),
-    );
-}
-
-test "runIfRequested credits failures use nonzero text and json contracts" {
+test "runIfRequested credits is unavailable without calling Gateway" {
     var text_capture = CaptureOutput.init(std.testing.allocator);
     defer text_capture.deinit();
-    var text_probe = CreditsProviderProbe{ .outcome = .failure };
-    var text_cfg = testConfig();
-    text_cfg.gateway_provider.credits = text_probe.provider();
+    const text_cfg = testConfig();
     var text_deps = text_capture.deps();
     text_deps.load_startup_state = stubLoadStartupState;
 
@@ -4888,16 +4724,11 @@ test "runIfRequested credits failures use nonzero text and json contracts" {
     );
     try std.testing.expectEqual(RunResult.handled_failure, text_result);
     try std.testing.expectEqualStrings("", text_capture.stdout.written());
-    try std.testing.expectEqualStrings(
-        "[credits] error: gateway unavailable\n",
-        text_capture.stderr.written(),
-    );
+    try std.testing.expect(std.mem.find(u8, text_capture.stderr.written(), "credits are not available") != null);
 
     var json_capture = CaptureOutput.init(std.testing.allocator);
     defer json_capture.deinit();
-    var json_probe = CreditsProviderProbe{ .outcome = .failure };
-    var json_cfg = testConfig();
-    json_cfg.gateway_provider.credits = json_probe.provider();
+    const json_cfg = testConfig();
     var json_deps = json_capture.deps();
     json_deps.load_startup_state = stubLoadStartupState;
 
@@ -4908,10 +4739,7 @@ test "runIfRequested credits failures use nonzero text and json contracts" {
         json_deps,
     );
     try std.testing.expectEqual(RunResult.handled_failure, json_result);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"error\":\"gateway unavailable\"}\n",
-        json_capture.stdout.written(),
-    );
+    try std.testing.expect(std.mem.find(u8, json_capture.stdout.written(), "\"code\":\"Unavailable\"") != null);
     try std.testing.expectEqualStrings("", json_capture.stderr.written());
 }
 
@@ -4925,7 +4753,7 @@ test "runIfRequested local json success appends exactly one newline" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json") }, testConfig(), deps);
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"auto\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
+        "{\"kind\":\"status\",\"model\":\"test-model\",\"model_source\":\"SuperGrok\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.\",\"permission_mode\":\"auto\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
         capture.stdout.written(),
     );
     try std.testing.expect(!std.mem.endsWith(u8, capture.stdout.written(), "\n\n"));
@@ -5018,7 +4846,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"ask\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
+        "{\"kind\":\"status\",\"model\":\"test-model\",\"model_source\":\"SuperGrok\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.\",\"permission_mode\":\"ask\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
         capture.stdout.written(),
     );
 }
@@ -5043,13 +4871,13 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
     defer capture.deinit();
 
     var checks = [_]doctor_runtime.Check{
-        .{ .name = "auth", .status = .ok, .detail = "AI_GATEWAY_API_KEY is configured" },
+        .{ .name = "auth", .status = .ok, .detail = "SuperGrok subscription is configured" },
         .{ .name = "gh", .status = .warn, .detail = "GitHub CLI not found in PATH" },
     };
     const snapshot = doctor_runtime.Snapshot{
         .workspace_root = @constCast("/tmp/fx"),
         .model = "test-model",
-        .auth = .{ .active_source = .ai_gateway_api_key },
+        .auth = .{ .active_source = .grok_subscription },
         .permission_mode = .auto,
         .agent_step_limit = 42,
         .checks = checks[0..],
@@ -5064,7 +4892,7 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"test-model\",\"auth\":\"AI_GATEWAY_API_KEY\",\"auth_refreshable\":false,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}\n",
+        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"test-model\",\"model_source\":\"SuperGrok\",\"auth\":\"SuperGrok subscription\",\"auth_refreshable\":true,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"SuperGrok subscription is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}\n",
         capture.stdout.written(),
     );
 }
@@ -5289,9 +5117,8 @@ fn stubLoadStartupState(
     state.selected_model = try alloc.dupe(u8, default_model);
     state.credential = .{
         .token = try alloc.dupe(u8, "test-key"),
-        .source = .ai_gateway_api_key,
+        .source = .grok_subscription,
     };
-    state.credential.?.team_id = try alloc.dupe(u8, "team_123");
     return state;
 }
 
@@ -5301,7 +5128,9 @@ fn stubLoadCatalogStartupState(
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupState {
-    return stubLoadStartupState(alloc, oauth_transport.unavailable_provider, secret_store, default_model, default_agent_step_limit);
+    var state = try stubLoadStartupState(alloc, oauth_transport.unavailable_provider, secret_store, default_model, default_agent_step_limit);
+    state.provider = .xai;
+    return state;
 }
 
 fn stubLoadStartupStatus(
@@ -5331,130 +5160,4 @@ fn failingStartupState(
     _: usize,
 ) !app_lifecycle.StartupState {
     return error.StartupShouldNotRun;
-}
-
-const ModelFetchProbe = struct {
-    const Outcome = enum {
-        success,
-        failure,
-        cancelled,
-    };
-
-    called: bool = false,
-    outcome: Outcome = .success,
-
-    fn provider(self: *ModelFetchProbe) gateway_provider.CliModelCatalogProvider {
-        return .{
-            .context = self,
-            .fetch_fn = fetch,
-        };
-    }
-
-    fn failure(
-        input: gateway_provider.CliModelCatalogInput,
-        category: model_catalog.FailureCategory,
-    ) gateway_provider.CliModelCatalogResult {
-        return .{ .failure = .{
-            .access = .init(input.access),
-            .anonymous_fallback_used = false,
-            .failure = .{ .category = category },
-        } };
-    }
-
-    fn fetch(
-        raw: ?*anyopaque,
-        alloc: Allocator,
-        input: gateway_provider.CliModelCatalogInput,
-    ) gateway_provider.CliModelCatalogResult {
-        const self: *ModelFetchProbe = @ptrCast(@alignCast(raw.?));
-        self.called = true;
-        if (!std.mem.eql(u8, input.access.authorizationCredential() orelse "", "test-key") or
-            !std.mem.eql(u8, input.access.teamContext() orelse "", "team_123") or
-            input.access.credentialSource() != .ai_gateway_api_key or
-            !std.mem.eql(u8, input.endpoint, "/v1/models") or
-            input.cancel_flag != null)
-        {
-            return failure(input, .runtime);
-        }
-
-        switch (self.outcome) {
-            .failure => return failure(input, .runtime),
-            .cancelled => return failure(input, .cancellation),
-            .success => {},
-        }
-
-        var ids: std.ArrayList([]u8) = .empty;
-        const id = alloc.dupe(u8, "private/blue-hornbill") catch {
-            return failure(input, .resource_exhausted);
-        };
-        ids.append(alloc, id) catch {
-            alloc.free(id);
-            return failure(input, .resource_exhausted);
-        };
-        return .{ .loaded = .{
-            .ids = ids,
-            .provenance = .{ .access = .init(input.access) },
-        } };
-    }
-};
-
-const ChatUrlProbe = struct {
-    called: bool = false,
-
-    fn provider(self: *ChatUrlProbe) gateway_provider.ChatUrlProvider {
-        return .{
-            .context = self,
-            .resolve_fn = resolve,
-        };
-    }
-
-    fn resolve(raw: ?*anyopaque, fallback: []const u8) []const u8 {
-        const self: *ChatUrlProbe = @ptrCast(@alignCast(raw.?));
-        self.called = std.mem.eql(u8, fallback, "https://example.test/chat");
-        return "http://127.0.0.1:43123/chat";
-    }
-};
-
-const CreditsProviderProbe = struct {
-    outcome: enum { success, failure },
-    calls: usize = 0,
-    saw_expected_input: bool = false,
-
-    fn provider(self: *CreditsProviderProbe) gateway_provider.CreditsProvider {
-        return .{
-            .context = self,
-            .fetch_fn = fetch,
-        };
-    }
-
-    fn fetch(
-        raw: ?*anyopaque,
-        alloc: Allocator,
-        input: gateway_provider.CreditsLookupInput,
-    ) output_contracts.CreditsSnapshot {
-        const self: *CreditsProviderProbe = @ptrCast(@alignCast(raw.?));
-        self.calls += 1;
-        self.saw_expected_input =
-            std.mem.eql(u8, input.credential orelse "", "test-key") and
-            std.mem.eql(u8, input.tenant orelse "", "team_123");
-        if (self.outcome == .failure) {
-            return ownedCreditsErrorSnapshot(alloc, "gateway unavailable");
-        }
-
-        var snapshot = output_contracts.CreditsSnapshot{};
-        snapshot.balance = alloc.dupe(u8, "10") catch return ownedCreditsErrorSnapshot(alloc, "invalid JSON response from gateway");
-        snapshot.used = alloc.dupe(u8, "2") catch {
-            snapshot.deinit(alloc);
-            return ownedCreditsErrorSnapshot(alloc, "invalid JSON response from gateway");
-        };
-        snapshot.plan = alloc.dupe(u8, "pro") catch {
-            snapshot.deinit(alloc);
-            return ownedCreditsErrorSnapshot(alloc, "invalid JSON response from gateway");
-        };
-        return snapshot;
-    }
-};
-
-fn ownedCreditsErrorSnapshot(alloc: Allocator, message: []const u8) output_contracts.CreditsSnapshot {
-    return .{ .err_message = alloc.dupe(u8, message) catch null };
 }

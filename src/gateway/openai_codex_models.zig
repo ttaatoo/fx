@@ -5,7 +5,7 @@ const gateway_provider = @import("../core/gateway/gateway_provider.zig");
 const io_mod = @import("../core/shared/io.zig");
 const secret = @import("../core/auth/secret.zig");
 const types = @import("../core/shared/types.zig");
-const gateway_client = @import("client.zig");
+const gateway_client = @import("http.zig");
 
 const max_catalog_models: usize = 128;
 const max_model_id_bytes: usize = 1024;

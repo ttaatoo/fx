@@ -361,24 +361,24 @@ fn writeTerminalSafe(writer: *std.Io.Writer, alloc: Allocator, raw: []const u8) 
     try writer.writeAll(encoded.bytes);
 }
 
-fn gatewayProviderConnected(auth: auth_runtime.StatusSnapshot) bool {
-    const source = auth.active_source orelse return auth.gateway_connected;
-    return auth.gateway_connected or source != .chatgpt_subscription;
-}
-
 fn chatGptProviderConnected(auth: auth_runtime.StatusSnapshot) bool {
     return auth.chatgpt_connected or auth.active_source == .chatgpt_subscription;
 }
 
 fn writeConnectedProvidersText(writer: *std.Io.Writer, auth: auth_runtime.StatusSnapshot) !void {
     var wrote_provider = false;
-    if (gatewayProviderConnected(auth)) {
-        try writer.writeAll("Vercel AI Gateway");
+    if (auth.active_source == .grok_subscription) {
+        try writer.writeAll("SuperGrok");
+        wrote_provider = true;
+    }
+    if (auth.active_source == .custom_provider) {
+        if (wrote_provider) try writer.writeAll(", ");
+        try writer.writeAll("Anthropic");
         wrote_provider = true;
     }
     if (chatGptProviderConnected(auth)) {
-        if (wrote_provider) try writer.writeAll(", Codex");
-        if (!wrote_provider) try writer.writeAll("Codex");
+        if (wrote_provider) try writer.writeAll(", ");
+        try writer.writeAll("Codex");
         wrote_provider = true;
     }
     if (!wrote_provider) try writer.writeAll("none");
@@ -386,7 +386,7 @@ fn writeConnectedProvidersText(writer: *std.Io.Writer, auth: auth_runtime.Status
 
 pub const StatusSnapshot = struct {
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     update_channel: []const u8 = "stable",
     build_channel: []const u8 = "stable",
     build_revision: []const u8 = "",
@@ -412,7 +412,7 @@ pub const StatusSnapshot = struct {
         defer out.deinit();
 
         try out.writer.print("[status] model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
+        if (true) {
             try out.writer.print("[status] model_source={s}\n", .{model_provider.label(self.provider)});
         }
         try out.writer.print("[status] update_channel={s}\n", .{self.update_channel});
@@ -451,7 +451,7 @@ pub const StatusSnapshot = struct {
         defer out.deinit();
 
         try out.writer.print("model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
+        if (true) {
             try out.writer.print("model_source={s}\n", .{model_provider.label(self.provider)});
         }
         try out.writer.print("update_channel={s}\n", .{self.update_channel});
@@ -489,7 +489,7 @@ pub const StatusSnapshot = struct {
     pub fn writeJson(self: StatusSnapshot, writer: *std.Io.Writer) !void {
         try writer.writeAll("{\"kind\":\"status\",\"model\":");
         try std.json.Stringify.value(self.model, .{}, writer);
-        if (self.provider != .gateway) {
+        if (true) {
             try writer.writeAll(",\"model_source\":");
             try std.json.Stringify.value(model_provider.label(self.provider), .{}, writer);
         }
@@ -508,8 +508,13 @@ pub const StatusSnapshot = struct {
         if (self.provider == .codex) {
             try writer.writeAll(",\"connected_providers\":[");
             var wrote_provider = false;
-            if (gatewayProviderConnected(self.auth)) {
-                try std.json.Stringify.value("vercel-ai-gateway", .{}, writer);
+            if (self.auth.active_source == .grok_subscription) {
+                try std.json.Stringify.value("supergrok", .{}, writer);
+                wrote_provider = true;
+            }
+            if (self.auth.active_source == .custom_provider) {
+                if (wrote_provider) try writer.writeByte(',');
+                try std.json.Stringify.value("anthropic", .{}, writer);
                 wrote_provider = true;
             }
             if (chatGptProviderConnected(self.auth)) {
@@ -638,7 +643,7 @@ pub const PermissionsSnapshot = struct {
 
 pub const ModelListSnapshot = struct {
     ids: []const []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     limit: ?usize = null,
     private_models_hidden: bool = false,
     public_only_reason: ?credentials.CatalogPublicOnlyReason = null,
@@ -666,7 +671,7 @@ pub const ModelListSnapshot = struct {
 
         const shown = self.shownCount();
         for (self.ids[0..shown]) |id| {
-            if (self.provider != .gateway) {
+            if (true) {
                 try out.writer.print(" - {s} · {s}\n", .{ id, model_provider.label(self.provider) });
             } else {
                 try out.writer.print(" - {s}\n", .{id});
@@ -694,7 +699,7 @@ pub const ModelListSnapshot = struct {
         try out.writer.print("{d} available", .{self.ids.len});
         const shown = self.shownCount();
         for (self.ids[0..shown]) |id| {
-            if (self.provider != .gateway) {
+            if (true) {
                 try out.writer.print("\n - {s} · {s}", .{ id, model_provider.label(self.provider) });
             } else {
                 try out.writer.print("\n - {s}", .{id});
@@ -718,7 +723,7 @@ pub const ModelListSnapshot = struct {
             if (i > 0) try out.writer.writeByte(',');
             try std.json.Stringify.value(id, .{}, &out.writer);
         }
-        if (self.provider != .gateway) {
+        if (true) {
             try out.writer.writeAll("],\"models\":[");
             for (self.ids[0..shown], 0..) |id, i| {
                 if (i > 0) try out.writer.writeByte(',');
@@ -739,7 +744,6 @@ pub const ModelListSnapshot = struct {
 
     fn emptyCatalogProviderName(self: ModelListSnapshot) []const u8 {
         return switch (self.provider) {
-            .gateway => "gateway",
             .codex, .anthropic, .xai => model_provider.label(self.provider),
         };
     }
@@ -748,11 +752,11 @@ pub const ModelListSnapshot = struct {
         if (!self.private_models_hidden) return null;
         const reason = self.public_only_reason orelse return "Using the public model catalog.";
         return switch (reason) {
-            .no_credential => "Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
-            .fx_login_team_required => "Choose a Vercel team to load its private models.",
-            .fx_login_refresh_required => "Vercel sign-in must refresh before team-private models can load.",
-            .credential_refresh_failed => "Vercel sign-in refresh failed; using the public model catalog.",
-            .authenticated_credential_rejected => "Your Gateway credential was rejected; using the public model catalog.",
+            .no_credential => "No SuperGrok or Anthropic credential is configured. Run fx login grok, or set ANTHROPIC_API_KEY.",
+            .fx_login_team_required => "Vercel teams are not used on this fork. Run fx login grok.",
+            .fx_login_refresh_required => "Vercel sign-in is not used on this fork. Run fx login grok.",
+            .credential_refresh_failed => "A retired Gateway credential was ignored. Run fx login grok.",
+            .authenticated_credential_rejected => "A retired Gateway credential was ignored. Run fx login grok.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
             .grok_subscription => "SuperGrok models require an authenticated SuperGrok session.",
         };
@@ -1194,7 +1198,7 @@ pub const SessionRecoverySnapshot = struct {
 pub const DoctorSnapshot = struct {
     workspace_root: []const u8,
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     auth: auth_runtime.StatusSnapshot = .{},
     permission_mode: types.PermissionMode,
     agent_step_limit: usize,
@@ -1218,7 +1222,7 @@ pub const DoctorSnapshot = struct {
         );
         try out.writer.print("[doctor] workspace={s}\n", .{self.workspace_root});
         try out.writer.print("[doctor] model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
+        if (true) {
             try out.writer.print("[doctor] model_source={s}\n", .{model_provider.label(self.provider)});
         }
         try out.writer.print("[doctor] auth={s}\n", .{self.auth.activeSourceLabel()});
@@ -1255,7 +1259,7 @@ pub const DoctorSnapshot = struct {
         try std.json.Stringify.value(self.workspace_root, .{}, writer);
         try writer.writeAll(",\"model\":");
         try std.json.Stringify.value(self.model, .{}, writer);
-        if (self.provider != .gateway) {
+        if (true) {
             try writer.writeAll(",\"model_source\":");
             try std.json.Stringify.value(model_provider.label(self.provider), .{}, writer);
         }
@@ -1949,7 +1953,7 @@ test "command failure snapshot renders stable escaped json" {
 test "core status snapshot text and json stay stable" {
     const snapshot = StatusSnapshot{
         .model = "alpha",
-        .auth_help = "Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.",
+        .auth_help = "This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.",
         .permission_mode = .ask,
         .workspace_root = "/tmp/fx",
         .history_turns = 3,
@@ -1960,14 +1964,14 @@ test "core status snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=missing\n[status] auth_refreshable=false\n[status] auth_help=Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\n[status] permission_mode=ask\n[status] sandbox=none\n[status] workspace=/tmp/fx\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] model_source=SuperGrok\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=missing\n[status] auth_refreshable=false\n[status] auth_help=This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.\n[status] permission_mode=ask\n[status] sandbox=none\n[status] workspace=/tmp/fx\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"ask\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}",
+        "{\"kind\":\"status\",\"model\":\"alpha\",\"model_source\":\"SuperGrok\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.\",\"permission_mode\":\"ask\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}",
         json,
     );
 }
@@ -1986,14 +1990,14 @@ test "core status snapshot includes selected team when present" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=fx login\n[status] auth_refreshable=true\n[status] team=example-team\n[status] permission_mode=ask\n[status] sandbox=none\n[status] workspace=/tmp/fx\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] model_source=SuperGrok\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=fx login\n[status] auth_refreshable=true\n[status] team=example-team\n[status] permission_mode=ask\n[status] sandbox=none\n[status] workspace=/tmp/fx\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"fx login\",\"auth_refreshable\":true,\"team\":\"example-team\",\"permission_mode\":\"ask\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}",
+        "{\"kind\":\"status\",\"model\":\"alpha\",\"model_source\":\"SuperGrok\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"fx login\",\"auth_refreshable\":true,\"team\":\"example-team\",\"permission_mode\":\"ask\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}",
         json,
     );
 }
@@ -2016,12 +2020,12 @@ test "status distinguishes the selected model route from connected providers" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.find(u8, text, "model_source=Codex subscription") != null);
-    try std.testing.expect(std.mem.find(u8, text, "connected_providers=Vercel AI Gateway, Codex") != null);
+    try std.testing.expect(std.mem.find(u8, text, "connected_providers=Codex") != null);
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expect(std.mem.find(u8, json, "\"model_source\":\"Codex subscription\"") != null);
-    try std.testing.expect(std.mem.find(u8, json, "\"connected_providers\":[\"vercel-ai-gateway\",\"codex\"]") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"connected_providers\":[\"codex\"]") != null);
 }
 
 test "status names a direct provider model source" {
@@ -2146,23 +2150,23 @@ test "model list explains public-only and rejected-credential catalogs" {
     }{
         .{
             .snapshot = .{ .ids = &ids, .private_models_hidden = true, .public_only_reason = .no_credential },
-            .text = "[models] 1 available\n - alpha\n[models] Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.\n",
-            .body = "1 available\n - alpha\nUsing the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
+            .text = "[models] 1 available\n - alpha · SuperGrok\n[models] No SuperGrok or Anthropic credential is configured. Run fx login grok, or set ANTHROPIC_API_KEY.\n",
+            .body = "1 available\n - alpha · SuperGrok\nNo SuperGrok or Anthropic credential is configured. Run fx login grok, or set ANTHROPIC_API_KEY.",
         },
         .{
             .snapshot = rejected,
-            .text = "[models] 1 available\n - alpha\n[models] Your Gateway credential was rejected; using the public model catalog.\n",
-            .body = "1 available\n - alpha\nYour Gateway credential was rejected; using the public model catalog.",
+            .text = "[models] 1 available\n - alpha · SuperGrok\n[models] A retired Gateway credential was ignored. Run fx login grok.\n",
+            .body = "1 available\n - alpha · SuperGrok\nA retired Gateway credential was ignored. Run fx login grok.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .private_models_hidden = true, .public_only_reason = .no_credential },
-            .text = "[models] no models returned by gateway\n[models] Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.\n",
-            .body = "no models returned by gateway\nUsing the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
+            .text = "[models] no models returned by SuperGrok\n[models] No SuperGrok or Anthropic credential is configured. Run fx login grok, or set ANTHROPIC_API_KEY.\n",
+            .body = "no models returned by SuperGrok\nNo SuperGrok or Anthropic credential is configured. Run fx login grok, or set ANTHROPIC_API_KEY.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .private_models_hidden = true, .public_only_reason = .authenticated_credential_rejected },
-            .text = "[models] no models returned by gateway\n[models] Your Gateway credential was rejected; using the public model catalog.\n",
-            .body = "no models returned by gateway\nYour Gateway credential was rejected; using the public model catalog.",
+            .text = "[models] no models returned by SuperGrok\n[models] A retired Gateway credential was ignored. Run fx login grok.\n",
+            .body = "no models returned by SuperGrok\nA retired Gateway credential was ignored. Run fx login grok.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .provider = .codex },
@@ -2184,7 +2188,7 @@ test "model list explains public-only and rejected-credential catalogs" {
     const json = try rejected.renderJson(alloc);
     defer alloc.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":true,\"ids\":[\"alpha\"]}",
+        "{\"kind\":\"models\",\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":true,\"ids\":[\"alpha\"],\"models\":[{\"id\":\"alpha\",\"source\":\"SuperGrok\"}]}",
         json,
     );
 
@@ -2203,32 +2207,32 @@ test "core model list snapshot handles limits and empty lists" {
     const all_text = try (ModelListSnapshot{ .ids = &ids }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(all_text);
     try std.testing.expectEqualStrings(
-        "[models] 3 available\n - alpha\n - beta\n - gamma\n",
+        "[models] 3 available\n - alpha · SuperGrok\n - beta · SuperGrok\n - gamma · SuperGrok\n",
         all_text,
     );
 
     const limit_text = try (ModelListSnapshot{ .ids = &ids, .limit = 2 }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(limit_text);
     try std.testing.expectEqualStrings(
-        "[models] 3 available\n - alpha\n - beta\n ... and 1 more\n",
+        "[models] 3 available\n - alpha · SuperGrok\n - beta · SuperGrok\n ... and 1 more\n",
         limit_text,
     );
 
     const limit_json = try (ModelListSnapshot{ .ids = &ids, .limit = 2 }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(limit_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":3,\"shown_count\":2,\"more_count\":1,\"private_models_hidden\":false,\"ids\":[\"alpha\",\"beta\"]}",
+        "{\"kind\":\"models\",\"count\":3,\"shown_count\":2,\"more_count\":1,\"private_models_hidden\":false,\"ids\":[\"alpha\",\"beta\"],\"models\":[{\"id\":\"alpha\",\"source\":\"SuperGrok\"},{\"id\":\"beta\",\"source\":\"SuperGrok\"}]}",
         limit_json,
     );
 
     const empty_text = try (ModelListSnapshot{ .ids = &.{} }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(empty_text);
-    try std.testing.expectEqualStrings("[models] no models returned by gateway\n", empty_text);
+    try std.testing.expectEqualStrings("[models] no models returned by SuperGrok\n", empty_text);
 
     const empty_json = try (ModelListSnapshot{ .ids = &.{} }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(empty_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":0,\"shown_count\":0,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[]}",
+        "{\"kind\":\"models\",\"count\":0,\"shown_count\":0,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[],\"models\":[]}",
         empty_json,
     );
 }
@@ -2721,13 +2725,13 @@ test "core session recovery snapshot text and json stay stable" {
 
 test "core doctor snapshot text and json stay stable" {
     const checks = [_]doctor_runtime.Check{
-        .{ .name = @constCast("auth"), .status = .ok, .detail = @constCast("AI_GATEWAY_API_KEY is configured") },
+        .{ .name = @constCast("auth"), .status = .ok, .detail = @constCast("SuperGrok subscription is configured") },
         .{ .name = @constCast("gh"), .status = .warn, .detail = @constCast("GitHub CLI not found in PATH") },
     };
     const snapshot = DoctorSnapshot{
         .workspace_root = "/tmp/fx",
         .model = "alpha",
-        .auth = .{ .active_source = .ai_gateway_api_key },
+        .auth = .{ .active_source = .grok_subscription },
         .permission_mode = .ask,
         .agent_step_limit = 24,
         .checks = &checks,
@@ -2736,14 +2740,14 @@ test "core doctor snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[doctor] ok=1 warn=1 fail=0\n[doctor] workspace=/tmp/fx\n[doctor] model=alpha\n[doctor] auth=AI_GATEWAY_API_KEY\n[doctor] auth_refreshable=false\n[doctor] permission_mode=ask\n[doctor] agent_step_limit=24\n[ok] auth: AI_GATEWAY_API_KEY is configured\n[warn] gh: GitHub CLI not found in PATH\n",
+        "[doctor] ok=1 warn=1 fail=0\n[doctor] workspace=/tmp/fx\n[doctor] model=alpha\n[doctor] model_source=SuperGrok\n[doctor] auth=SuperGrok subscription\n[doctor] auth_refreshable=true\n[doctor] permission_mode=ask\n[doctor] agent_step_limit=24\n[ok] auth: SuperGrok subscription is configured\n[warn] gh: GitHub CLI not found in PATH\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"alpha\",\"auth\":\"AI_GATEWAY_API_KEY\",\"auth_refreshable\":false,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}",
+        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"alpha\",\"model_source\":\"SuperGrok\",\"auth\":\"SuperGrok subscription\",\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"SuperGrok subscription is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}",
         json,
     );
 }

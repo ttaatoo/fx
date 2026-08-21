@@ -24,13 +24,9 @@ TRAINING_E2E_TESTS = (
     "ask-presentation.test.ts",
     "config-persistence.test.ts",
     "prompt-history.test.ts",
-    "auth-refresh.test.ts",
     "file-tool-paths.test.ts",
     "file-tool-permissions.test.ts",
-    "gateway-stream-lifecycle.test.ts",
     "web-fetch-fake-network.test.ts",
-    "web-search-fake-gateway.test.ts",
-    "vision-route-fake-gateway.test.ts",
     "acp.test.ts",
     "mcp-http.test.ts",
     "mcp-legacy-remote.test.ts",
@@ -49,13 +45,10 @@ TRAINING_E2E_TESTS = (
     "tui-subagent-manager.test.ts",
     "tui-terminal-tool.test.ts",
     "tui-native-clear-recovery.test.ts",
-    "tui-gateway-stream-lifecycle.test.ts",
 )
 
 VERIFICATION_E2E_TESTS = (
     "auto-mode-reliability.test.ts",
-    "oauth-keychain-migration.test.ts",
-    "tui-auth-source-selection.test.ts",
     "tui-composer-edit-contracts.test.ts",
     "tui-cost.test.ts",
     "tui-decision-prompts.test.ts",
@@ -364,8 +357,8 @@ class PgsoCorpusTests(unittest.TestCase):
             EXCLUDED_E2E_TESTS,
             tuple(test_file for test_file, _ in corpus.intentional_exclusions),
         )
-        self.assertEqual(36, len(corpus.scenarios))
-        self.assertEqual(53, len(corpus.candidate_scenarios))
+        self.assertEqual(31, len(corpus.scenarios))
+        self.assertEqual(46, len(corpus.candidate_scenarios))
         self.assertEqual(
             100,
             next(
@@ -383,7 +376,7 @@ class PgsoCorpusTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            ("verify-oauth-keychain-migration",),
+            (),
             tuple(
                 scenario.name
                 for scenario in corpus.verification_scenarios

@@ -1,6 +1,5 @@
 const std = @import("std");
 const std_builtin = @import("builtin");
-const builtin_gateway = @import("gateway.zig");
 const terminal_contracts = @import("../core/terminal/contracts.zig");
 const terminal_monitor = @import("../core/terminal/monitor.zig");
 const gateway_schema = @import("../core/tooling/gateway_schema.zig");
@@ -949,24 +948,6 @@ pub const web_fetch = ToolSpec{
     .irreversible_fn = web_fetch_impl.isIrreversible,
 };
 
-fn writeWebSearchGatewayAdvertisement(
-    alloc: Allocator,
-    writer: *std.Io.Writer,
-) tool_dispatch.GatewayAdvertisementError!void {
-    const policy = builtin_gateway.default_web_search_policy;
-    const provider_tools = try builtin_gateway.providerToolsJson(alloc, .{
-        .backend = try builtin_gateway.selectedWebSearchBackend(),
-        .max_results = policy.max_results,
-        .max_output_tokens = policy.max_output_tokens,
-        .max_output_chars = policy.max_output_chars,
-    });
-    defer alloc.free(provider_tools);
-    if (provider_tools.len < 2 or provider_tools[0] != '[' or provider_tools[provider_tools.len - 1] != ']') {
-        return error.InvalidGatewayAdvertisement;
-    }
-    try writer.writeAll(provider_tools[1 .. provider_tools.len - 1]);
-}
-
 pub const web_search = ToolSpec{
     .name = "web_search",
     .description = web_search_description,
@@ -983,8 +964,7 @@ pub const web_search = ToolSpec{
             .additional_properties = false,
         },
     },
-    .write_gateway_advertisement_fn = writeWebSearchGatewayAdvertisement,
-    .provider_executed = true,
+    .provider_executed = false,
     .executor_kind = .web_search,
     .activity_kind = .read,
     .requires_approval = false,
@@ -1448,11 +1428,8 @@ test "terminal tool schema derives one closed branch per terminal action" {
             try std.testing.expectEqualStrings(field_name, property.name);
             if (std.mem.eql(u8, field_name, "action")) {
                 try std.testing.expect(!property.nullable);
-                try std.testing.expectEqualSlices(
-                    []const u8,
-                    &.{@tagName(action)},
-                    schemaEnumValues(property),
-                );
+                try std.testing.expectEqual(@as(usize, 1), schemaEnumValues(property).len);
+                try std.testing.expectEqualStrings(@tagName(action), schemaEnumValues(property)[0]);
                 continue;
             }
             try std.testing.expectEqual(
@@ -2417,20 +2394,15 @@ test "built-in web_search is registered in default production tools" {
     try std.testing.expect(lookup("web_search") != null);
 }
 
-test "built-in web_search owns its Gateway provider advertisement" {
+test "built-in web_search advertises a native function schema" {
     const registered = registry.lookup("web_search") orelse return error.TestExpectedEqual;
-    const write_advertisement = registered.write_gateway_advertisement_fn orelse return error.TestExpectedEqual;
+    try std.testing.expect(registered.write_gateway_advertisement_fn == null);
+    try std.testing.expect(!registered.provider_executed);
 
-    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-    try write_advertisement(std.testing.allocator, &out.writer);
-    const json = try out.toOwnedSlice();
+    const json = try tool_specs.toolGatewaySchemaJson(std.testing.allocator, web_search);
     defer std.testing.allocator.free(json);
-
-    try std.testing.expectEqualStrings(
-        "{\"type\":\"provider\",\"id\":\"gateway.perplexity_search\",\"name\":\"perplexity_search\",\"args\":{\"maxResults\":10,\"maxTokens\":4096}}",
-        json,
-    );
+    try std.testing.expect(std.mem.find(u8, json, "\"name\":\"web_search\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "gateway.perplexity_search") == null);
 }
 
 fn expectWebSearchSchemaContains(needle: []const u8) !void {

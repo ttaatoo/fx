@@ -152,7 +152,7 @@ pub const ActiveSessionState = struct {
     wasm_revision: ?[]u8 = null,
     session_write_mutex: std.Io.Mutex = .init,
     model: []u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     mode: []const u8,
     workspace_root: []const u8,
     api_key: []const u8,
@@ -224,7 +224,7 @@ pub const ServerState = struct {
     account_id: ?[]u8 = null,
     gateway_team: ?[]u8 = null,
     selected_model: []u8 = &.{},
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     configured_model: []u8 = &.{},
     process_model_override: bool = false,
     permission_mode: types.PermissionMode = .ask,
@@ -345,12 +345,7 @@ pub fn selectCredentialForProvider(
     }
     if (credentialMatchesProvider(state.credential_source, provider) and state.api_key.len > 0) return true;
 
-    var credential = if (provider == .gateway and state.cfg.credential_override != null)
-        credentials.Credential{
-            .token = try state.alloc.dupe(u8, state.cfg.credential_override.?),
-            .source = .ai_gateway_api_key,
-        }
-    else blk: {
+    var credential = blk: {
         const resolution = try credentials.resolveForProvider(
             state.alloc,
             state.cfg.gateway_provider.oauth_transport,
@@ -371,7 +366,6 @@ pub fn streamProviderFor(
     provider: model_provider.ProviderId,
 ) @import("../core/agent/stream_provider.zig").Provider {
     return switch (provider) {
-        .gateway => state.cfg.gateway_provider.agent_stream,
         .codex => state.cfg.codex_agent_stream orelse
             @import("../core/agent/stream_provider.zig").unavailable_provider,
         .anthropic, .xai => @import("../gateway/direct_provider.zig").agent_stream_provider,
@@ -383,7 +377,6 @@ pub fn catalogProviderFor(
     provider: model_provider.ProviderId,
 ) ?@import("../core/gateway/model_catalog.zig").Provider {
     return switch (provider) {
-        .gateway => state.cfg.gateway_provider.model_catalog,
         .codex => state.cfg.codex_model_catalog,
         .anthropic, .xai => @import("../gateway/direct_provider.zig").model_catalog_provider,
     };
@@ -665,7 +658,7 @@ pub fn runWithTransport(
         .cfg = cfg,
         .writer = writer_value,
         .web_search_runtime = web_search_runtime.Runtime.init(.{
-            .provider = cfg.gateway_provider.web_search,
+            .provider = null,
         }),
         .background = background_runtime.BackgroundRuntime.init(
             cfg.background_process_provider,
@@ -1376,13 +1369,7 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
         credentialMatchesProvider(credential.source, state.provider)
     else
         false;
-    const credential: *credentials.Credential = if (state.provider == .gateway and state.cfg.credential_override != null) override: {
-        routed_credential = .{
-            .token = try alloc.dupe(u8, state.cfg.credential_override.?),
-            .source = .ai_gateway_api_key,
-        };
-        break :override &routed_credential.?;
-    } else if (startup_matches_model)
+    const credential: *credentials.Credential = if (startup_matches_model)
         &startup_credential.?
     else routed: {
         const preferred = if (startup_credential) |value| value.source else null;
@@ -1642,12 +1629,7 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
                     .message = "Codex provider switching is unavailable in this WASM runtime",
                 });
             }
-            var staged_credential = if (target == .gateway and state.cfg.credential_override != null)
-                credentials.Credential{
-                    .token = try alloc.dupe(u8, state.cfg.credential_override.?),
-                    .source = .ai_gateway_api_key,
-                }
-            else credential: {
+            var staged_credential = credential: {
                 const resolution = try credentials.resolveForProvider(
                     alloc,
                     state.cfg.gateway_provider.oauth_transport,
@@ -2533,7 +2515,7 @@ test "ACP usage flush preserves snapshot ownership on allocation failure" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
 

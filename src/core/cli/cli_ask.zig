@@ -48,6 +48,7 @@ const sandbox = @import("../permissions/sandbox.zig");
 const session_runtime = @import("../session/session.zig");
 const session_codec = @import("../session/session_codec.zig");
 const session_usage = @import("../session/session_usage.zig");
+const generation_usage_provider = @import("../session/generation_usage_provider.zig");
 const usage_report = @import("../session/usage_report.zig");
 const session_store = @import("../session/session_store.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
@@ -271,10 +272,6 @@ fn runAskChild(
         .host = ctx.subagent_host orelse return error.ProviderFailed,
         .tool_context = ctx.toolContext(),
         .provider_routes = .{
-            .gateway = .{
-                .agent_stream_provider = ctx.cfg.gateway_provider.agent_stream,
-                .permission_reviewer_provider = ctx.cfg.permission_reviewer_provider,
-            },
             .codex = .{
                 .agent_stream_provider = ctx.cfg.codex_agent_stream orelse agent_stream_provider.unavailable_provider,
                 .permission_reviewer_provider = ctx.cfg.codex_permission_reviewer_provider,
@@ -524,7 +521,7 @@ const AskContext = struct {
     gateway_team: ?[]const u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     model_catalog_access: credentials.CatalogAccess = .{ .public_only = .no_credential },
     model: []const u8 = "",
     agent_step_limit: usize = 0,
@@ -599,10 +596,10 @@ const AskContext = struct {
             .mode_id = cfg.mode_registry.default_mode_id,
             .session = session_runtime.SessionRuntime.init(
                 cfg.max_history_turns,
-                cfg.gateway_provider.generation_usage,
+                generation_usage_provider.unavailable_provider,
             ),
             .web_search_runtime = web_search_runtime.Runtime.init(.{
-                .provider = cfg.gateway_provider.web_search,
+                .provider = null,
             }),
             .background = BackgroundRuntime.init(
                 cfg.background_process_provider,
@@ -942,7 +939,7 @@ const AskContext = struct {
     }
 
     fn toolContext(self: *AskContext) tool_runtime.Context {
-        const gateway_features_allowed = model_provider.usesGatewayAuxiliaries(self.provider);
+        const gateway_features_allowed = false;
         if (gateway_features_allowed) {
             self.web_search_runtime.configure(.{
                 .api_key = self.api_key,
@@ -1059,7 +1056,6 @@ const AskContext = struct {
     fn admissionAutoClassifier(self: *AskContext) permission_auto_classifier.Classifier {
         if (self.auto_classifier.enabled()) return self.auto_classifier;
         const provider = switch (self.provider) {
-            .gateway => self.cfg.permission_reviewer_provider,
             .codex => self.cfg.codex_permission_reviewer_provider,
             .anthropic, .xai => null,
         } orelse
@@ -1076,7 +1072,6 @@ const AskContext = struct {
 
     fn agentStreamProvider(self: *const AskContext) agent_stream_provider.Provider {
         return switch (self.provider) {
-            .gateway => self.cfg.gateway_provider.agent_stream,
             .codex => self.cfg.codex_agent_stream orelse agent_stream_provider.unavailable_provider,
             .anthropic, .xai => @import("../../gateway/direct_provider.zig").agent_stream_provider,
         };
@@ -3873,7 +3868,7 @@ fn testPresentKeyStartup(alloc: Allocator, _: oauth_transport.Provider, _: host.
     state.workspace_root = try alloc.dupe(u8, "/tmp/fx-test");
     state.credential = .{
         .token = try alloc.dupe(u8, "key"),
-        .source = .ai_gateway_api_key,
+        .source = .grok_subscription,
     };
     state.selected_model = try alloc.dupe(u8, default_model);
     state.context_enabled = true;
@@ -3958,14 +3953,11 @@ fn testProcessQueuedPromptChecksTimeout(deps: *const agent_runtime.AgentRuntimeD
     const tool_ctx = ctx.toolContext();
     try std.testing.expectEqual(@as(?usize, std.time.ms_per_s), tool_ctx.command_timeout_ms);
     try std.testing.expect(!tool_ctx.web_search_runtime_ready);
-    try std.testing.expect(tool_ctx.web_search_backend != null);
+    try std.testing.expect(tool_ctx.web_search_backend == null);
     try std.testing.expect(tool_ctx.web_fetch_runtime.? == &ctx.web_fetch_runtime);
     try std.testing.expect(tool_ctx.web_fetch_progress_ctx != null);
     try std.testing.expect(tool_ctx.on_web_fetch_progress != null);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
-    try std.testing.expect(ctx.web_search_runtime.provider.?.execute_fn == ctx.cfg.gateway_provider.web_search.execute_fn);
+    try std.testing.expect(ctx.web_search_runtime.provider == null);
     try std.testing.expectEqualStrings("/models", tool_ctx.gateway_models_path);
     try std.testing.expect(tool_ctx.devbox_provider.?.execute_fn == unavailableDevboxForTest);
     try testPushAssistantText(deps, "assistant text");
@@ -3979,11 +3971,11 @@ fn testProcessQueuedPromptChecksExecOnlyTerminal(deps: *const agent_runtime.Agen
     try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "\"name\":\"read_file\"") != null);
     try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "\"name\":\"terminal\"") != null);
     try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "\"name\":\"run_command\"") == null);
-    try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "\"name\":\"web_search\"") == null);
-    try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "gateway.perplexity_search") != null);
+    try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "\"name\":\"web_search\"") != null);
+    try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "gateway.perplexity_search") == null);
     try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "Run one captured command and return its result.") != null);
     try std.testing.expect(std.mem.find(u8, cfg.gateway_tools_json, "Use start for commands") == null);
-    try std.testing.expectEqualStrings(builtin_tools.web_search.description, cfg.custom_tool_guidance);
+    try std.testing.expectEqualStrings("", cfg.custom_tool_guidance);
     try std.testing.expectEqualStrings("test model overlay", cfg.model_prompt_overlay.?);
     const runtime_terminal = deps.tool_registry.lookup("terminal") orelse
         return error.TestExpectedEqual;
@@ -4622,46 +4614,14 @@ test "fx ask deps validate malformed registered calls" {
     try std.testing.expectEqualStrings("web_fetch field \"url\" must be a string", result.failure);
 }
 
-test "CLI prompt projection configures web search then blocks native execution" {
+test "CLI prompt projection advertises native web_search without a local backend" {
     const alloc = std.testing.allocator;
-    const web_search_contract = @import("../tooling/web_search_contract.zig");
-    const ProviderState = struct {
-        calls: usize = 0,
-    };
-    const FailingWebSearchProvider = struct {
-        fn execute(
-            raw_ctx: ?*anyopaque,
-            _: Allocator,
-            _: web_search_runtime.Inputs,
-            _: web_search_contract.ProviderRequest,
-            _: ?web_search_contract.ProgressFn,
-            _: ?*anyopaque,
-        ) anyerror!web_search_contract.ProviderResponse {
-            const state: *ProviderState = @ptrCast(@alignCast(raw_ctx orelse return error.TestWebSearchProvider));
-            state.calls += 1;
-            return error.TestWebSearchProvider;
-        }
-    };
     var stdout_capture = TestCapture{};
     defer stdout_capture.deinit(alloc);
     var stderr_capture = TestCapture{};
     defer stderr_capture.deinit(alloc);
     var ctx = AskContext.init(alloc, testConfig(), testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup), "/tmp/workspace");
     defer ctx.deinit();
-    var provider_state = ProviderState{};
-    var provider = ctx.web_search_runtime.provider orelse return error.TestExpectedEqual;
-    provider.context = @ptrCast(&provider_state);
-    provider.execute_fn = FailingWebSearchProvider.execute;
-    ctx.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = provider,
-    });
-
-    ctx.web_search_runtime.configure(.{
-        .api_key = "stale-key",
-        .worker_model = "stale-model",
-        .gateway_retry_count = 99,
-        .gateway_chat_url = "https://stale.invalid/chat",
-    });
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
@@ -4673,8 +4633,6 @@ test "CLI prompt projection configures web search then blocks native execution" 
     try append_static(deps.ctx, arena, &messages);
     try deps.append_runtime_context(deps.ctx, arena, &messages);
 
-    try std.testing.expectEqualStrings("stale-key", ctx.web_search_runtime.api_key);
-
     const validate = deps.validate_tool_call orelse return error.TestExpectedEqual;
     const validation = try validate(deps.ctx, arena, .{
         .id = "search",
@@ -4682,10 +4640,6 @@ test "CLI prompt projection configures web search then blocks native execution" 
         .arguments_json = "{\"query\":\"x\"}",
     });
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-    try std.testing.expectEqualStrings(ctx.api_key, ctx.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
 
     const execute = deps.execute_tool_call;
     const execution = try execute(deps.ctx, .{
@@ -4701,12 +4655,9 @@ test "CLI prompt projection configures web search then blocks native execution" 
         .advertised_dynamic_tool_names = &.{},
         .max_tool_result_bytes = ctx.max_tool_result_bytes,
     });
-    try std.testing.expectEqualStrings(ctx.api_key, ctx.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqual(.failure, execution.status);
-    try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
+    try std.testing.expect(std.mem.find(u8, execution.model_output, "web_search is unavailable") != null);
+    try std.testing.expect(ctx.toolContext().web_search_backend == null);
 }
 
 test "fx ask ChatGPT route disables Gateway-backed auxiliary providers" {
@@ -5355,7 +5306,7 @@ test "fx ask automatic review observes worker cancellation" {
     var stderr_capture: TestCapture = .{};
     defer stderr_capture.deinit(alloc);
     var cfg = testConfig();
-    cfg.permission_reviewer_provider = .{ .review_fn = Provider.review };
+    cfg.codex_permission_reviewer_provider = .{ .review_fn = Provider.review };
     var ctx = AskContext.init(
         alloc,
         cfg,
@@ -5363,6 +5314,8 @@ test "fx ask automatic review observes worker cancellation" {
         "/tmp/workspace",
     );
     defer ctx.deinit();
+    ctx.provider = .codex;
+    ctx.credential_source = .chatgpt_subscription;
     ctx.worker.worker_cancel_requested.store(true, .seq_cst);
 
     const call: ToolCall = .{
@@ -7238,7 +7191,7 @@ test "current ask state releases partial snapshots on allocation failure" {
         1,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     const writable = &ctx.writable.?;
@@ -7534,7 +7487,7 @@ test "saved ask settles profile publication before persistence teardown" {
         1,
         .observed_generation,
         generation_id,
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     try ctx.session.usage.applyGeneration(alloc, .{
@@ -8145,18 +8098,18 @@ test "fx ask text and JSON share the selected auth failure facts" {
 
     try std.testing.expectEqual(@as(u8, 1), exit_code);
     try std.testing.expectEqualStrings(
-        "fx ask: AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "fx ask: SuperGrok subscription authentication failed · HTTP 401\n",
         stderr_capture.bytes.items,
     );
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
     try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
     try std.testing.expectEqualStrings(
-        "AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "SuperGrok subscription authentication failed · HTTP 401\n",
         parsed.value.object.get("output").?.string,
     );
     const auth_failure = parsed.value.object.get("auth_failure").?.object;
-    try std.testing.expectEqualStrings("AI_GATEWAY_API_KEY", auth_failure.get("source").?.string);
+    try std.testing.expectEqualStrings("SuperGrok subscription", auth_failure.get("source").?.string);
     try std.testing.expectEqualStrings("http_unauthorized", auth_failure.get("reason").?.string);
     try std.testing.expectEqual(@as(i64, 401), auth_failure.get("http_status").?.integer);
     try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, "secret-key") == null);
@@ -8406,7 +8359,7 @@ test "indeterminate saved auth cleanup keeps the primary result and session id" 
     try std.testing.expectEqual(@as(usize, 1), probe.calls);
     try std.testing.expect(probe.borrowers_detached);
     try std.testing.expectEqualStrings(
-        "fx ask: AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "fx ask: SuperGrok subscription authentication failed · HTTP 401\n",
         stderr_capture.bytes.items,
     );
     var parsed = try std.json.parseFromSlice(
@@ -8419,7 +8372,7 @@ test "indeterminate saved auth cleanup keeps the primary result and session id" 
     try std.testing.expect(parsed.value.object.get("error") == null);
     try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
     try std.testing.expectEqualStrings(
-        "AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "SuperGrok subscription authentication failed · HTTP 401\n",
         parsed.value.object.get("output").?.string,
     );
     const session_id = parsed.value.object.get("session_id").?.string;

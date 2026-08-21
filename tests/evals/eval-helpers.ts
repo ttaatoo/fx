@@ -1,4 +1,4 @@
-// Model-backed eval helpers. Requires a built binary and AI_GATEWAY_API_KEY.
+// Model-backed eval helpers. Requires a built binary and ANTHROPIC_API_KEY.
 import { expect } from "bun:test";
 import { execFileSync, execSync, spawn as nodeSpawn } from "node:child_process";
 import {
@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { adaptRetiredGatewayTestEnv } from "../e2e/direct-provider-env";
 
 export const FX_BIN = resolve(import.meta.dirname, "../../zig-out/bin/fx");
 export const REPO_ROOT = resolve(import.meta.dirname, "../..");
@@ -487,8 +488,9 @@ export async function runFx(
         env[key] = value;
       }
     }
+    const adapted = adaptRetiredGatewayTestEnv(env);
     const child = nodeSpawn(FX_BIN, args, {
-      env,
+      env: adapted,
       cwd: cwd ?? REPO_ROOT,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -527,6 +529,4 @@ export async function runFx(
   });
 }
 
-export const HAS_API_KEY: boolean = !!(
-  process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN
-);
+export const HAS_API_KEY: boolean = !!process.env.ANTHROPIC_API_KEY;

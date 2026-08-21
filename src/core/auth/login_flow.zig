@@ -540,49 +540,11 @@ pub fn runLogin(
     transport: oauth_transport.Provider,
     url_opener: host.UrlOpener,
 ) !void {
-    var prepared = try prepareLogin(alloc, transport);
-    defer prepared.deinit(alloc);
-
-    const display_url = prepared.device.verification_uri_complete orelse prepared.device.verification_uri;
-    try writeStdout("Open ");
-    try writeStdout(display_url);
-    try writeStdout("\nCode: ");
-    try writeStdout(prepared.device.user_code);
-    try writeStdout("\n\n");
-
-    var browser_prompt = try BrowserOpenPrompt.init(display_url);
-    try browser_prompt.writeWaitingMessage();
-
-    var token = try pollForTokenWithPrompt(
-        alloc,
-        transport,
-        prepared.metadata,
-        prepared.client_id,
-        prepared.device,
-        &browser_prompt,
-        url_opener,
-    );
-    defer token.deinit(alloc);
-
-    var teams = fetchTeams(alloc, token.access_token, prepared.metadata.issuer) catch std.ArrayList(Team).empty;
-    defer freeTeams(alloc, &teams);
-    const selected_team_index = try selectTeam(alloc, teams.items, null);
-    const selected_team = if (selected_team_index) |index| &teams.items[index] else null;
-
-    const now_ms = io_mod.milliTimestamp();
-    var session = try take_login_session(
-        alloc,
-        prepared.metadata.issuer,
-        prepared.client_id,
-        &token,
-        selected_team,
-        now_ms,
-    );
-    defer session.deinit(alloc);
-
-    try oauth_session.saveNewSession(alloc, session);
-    try writeStdout("Signed in to Vercel.\n");
-    try writeStdout("AI Gateway access may still require billing or API setup for the selected account.\n");
+    _ = alloc;
+    _ = transport;
+    _ = url_opener;
+    try writeStdout("Vercel AI Gateway is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+    return error.RetiredGatewayLogin;
 }
 
 fn take_login_session(
@@ -641,7 +603,7 @@ pub fn runTeams(
     const selected = selection.teams.items[selected_index];
     var changed_team = try selection.select(alloc, selected_index);
     defer changed_team.deinit(alloc);
-    try writeStdoutFmt("Selected Vercel team: {s} ({s}).\n", .{ selected.name, selected.slug });
+    try writeStdoutFmt("Selected team: {s} ({s}).\n", .{ selected.name, selected.slug });
 }
 
 pub fn loadTeamSelection(
@@ -1115,8 +1077,8 @@ fn defaultTeamIndex(teams: []const Team, current: ?[]const u8) usize {
 }
 
 fn selectTeamByLine(alloc: Allocator, teams: []const Team, default_index: usize) !usize {
-    try writeStdout("\nSelect a Vercel team for AI Gateway:\n");
-    try writeStdout("Model requests will use the selected team; Gateway access may still require billing or API setup.\n\n");
+    try writeStdout("\nSelect a team:\n");
+    try writeStdout("Model requests will use the selected team.\n\n");
     for (teams, 0..) |team, i| {
         const marker = if (i == default_index) " (default)" else "";
         try writeStdoutFmt("  {d}. {s} ({s}){s}\n", .{ i + 1, team.name, team.slug, marker });
@@ -1141,8 +1103,8 @@ fn selectTeamInteractive(alloc: Allocator, teams: []const Team, default_index: u
     var raw = try TeamPickerRawMode.enable();
     defer raw.disable();
 
-    try writeStdout("\nSelect a Vercel team for AI Gateway:\n");
-    try writeStdout("Model requests will use the selected team; Gateway access may still require billing or API setup.\n\n");
+    try writeStdout("\nSelect a team:\n");
+    try writeStdout("Model requests will use the selected team.\n\n");
 
     var selected = default_index;
     var first_render = true;

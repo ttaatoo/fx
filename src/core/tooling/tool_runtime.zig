@@ -68,14 +68,11 @@ const web_search_contract = @import("web_search_contract.zig");
 const web_fetch_artifacts = @import("../session/web_fetch_artifacts.zig");
 const types = @import("../shared/types.zig");
 const model_provider = @import("../config/model_provider.zig");
+const gateway_json = @import("../gateway/gateway_json.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const context_contract = @import("../workspace/context_contract.zig");
 const test_builtin_tools = if (builtin.is_test)
     @import("../../builtins/tools.zig")
-else
-    struct {};
-const test_builtin_gateway = if (builtin.is_test)
-    @import("../../builtins/gateway.zig")
 else
     struct {};
 const test_browser_workspace_tools = if (builtin.is_test)
@@ -138,7 +135,7 @@ pub const Context = struct {
     gateway_team: ?[]const u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     oauth_transport: oauth_transport.Provider = oauth_transport.unavailable_provider,
     secret_store: host_mod.SecretStore = host_mod.unavailable_secret_store,
     model: []const u8,
@@ -157,6 +154,8 @@ pub const Context = struct {
     tool_registry: tool_dispatch.Registry = .{},
     subagent_host: ?*subagent_tool_host.Runtime = null,
     subagent_caller_id: ?[]const u8 = null,
+    /// Test-only: exercise the Vision executor after product providers retired that tool.
+    allow_disabled_provider_tools: bool = false,
     permission_mode: PermissionMode,
     permission_grants: []const PermissionGrant,
     session_grants: []const PermissionGrant = &.{},
@@ -303,13 +302,12 @@ fn registeredToolSpec(ctx: Context, name: []const u8) ?*const tool_specs.ToolSpe
     return ctx.tool_registry.lookup(name);
 }
 
-fn providerDisablesTool(provider: model_provider.ProviderId, name: []const u8) bool {
-    return std.mem.eql(u8, name, "vision") and
-        !model_provider.usesGatewayAuxiliaries(provider);
+fn providerDisablesTool(_: model_provider.ProviderId, name: []const u8) bool {
+    return std.mem.eql(u8, name, "vision");
 }
 
 pub fn validateToolCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_contracts.ToolCallValidationResult {
-    if (providerDisablesTool(ctx.provider, call.name)) {
+    if (!ctx.allow_disabled_provider_tools and providerDisablesTool(ctx.provider, call.name)) {
         return .{ .failure = try arena.dupe(u8, "Unsupported tool: vision") };
     }
     const spec = registeredToolSpec(ctx, call.name) orelse {
@@ -341,7 +339,7 @@ pub fn validateToolCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_co
 }
 
 pub fn checkToolAvailability(ctx: Context, arena: Allocator, call: ToolCall) !?[]const u8 {
-    if (providerDisablesTool(ctx.provider, call.name)) {
+    if (!ctx.allow_disabled_provider_tools and providerDisablesTool(ctx.provider, call.name)) {
         return try arena.dupe(u8, "Unsupported tool: vision");
     }
     return tool_dispatch.localToolAvailabilityFailureForCall(
@@ -2136,7 +2134,7 @@ const TestRuntime = struct {
     max_command_output_bytes: usize = 64 * 1024,
     max_tool_result_bytes: usize = 64 * 1024,
     api_key: []const u8 = "",
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     gateway_team: ?[]const u8 = null,
     gateway_retry_count: usize = 0,
     gateway_chat_url: []const u8 = "",
@@ -8351,11 +8349,40 @@ const VisionGatewayFixture = struct {
         self.payloads.deinit(self.alloc);
     }
 
+    fn buildVisionPayload(
+        _: ?*anyopaque,
+        alloc: Allocator,
+        request: agent_stream_provider.BuildRequest,
+    ) anyerror![]u8 {
+        const images = request.verified_images orelse return alloc.dupe(u8, "{}");
+        const response_format = request.response_format orelse
+            return error.MissingStructuredResponseFormat;
+        const budget: gateway_json.BuildBudget = if (request.budget) |value|
+            .{ .deadline = value.deadline, .cancel_flag = value.cancel_flag }
+        else
+            .{};
+        return gateway_json.buildGatewayRequestBodyWithVerifiedImagesAndBudget(
+            alloc,
+            request.serialized_tools,
+            request.messages,
+            images,
+            request.provider_options,
+            request.tool_choice,
+            .{
+                .name = response_format.name,
+                .description = response_format.description,
+                .schema_json = response_format.schema_json,
+            },
+            budget,
+        );
+    }
+
     fn provider(self: *VisionGatewayFixture) agent_stream_provider.Provider {
-        var result = test_builtin_gateway.agent_stream_provider;
-        result.context = self;
-        result.stream_fn = stream;
-        return result;
+        return .{
+            .context = self,
+            .build_fn = buildVisionPayload,
+            .stream_fn = stream,
+        };
     }
 
     fn stream(
@@ -8387,7 +8414,7 @@ const VisionGatewayFixture = struct {
                 .finish_reason = .stop,
                 .usage = response.usage,
             },
-            .generation_origin = "https://ai-gateway.vercel.sh",
+            .generation_origin = "https://cli-chat-proxy.grok.com/v1",
         };
     }
 };
@@ -8477,7 +8504,9 @@ fn executeVisionForTest(
     args_json: []const u8,
     catalog: []const types.ImageAttachment,
 ) !ToolExecutionResult {
-    return executeToolCallAuthorized(rt.context(), .{
+    var ctx = rt.context();
+    ctx.allow_disabled_provider_tools = rt.provider != .codex;
+    return executeToolCallAuthorized(ctx, .{
         .call_allocator = alloc,
         .result_allocator = alloc,
         .call = .{ .id = "vision-call", .name = "vision", .arguments_json = args_json },
@@ -8531,7 +8560,9 @@ fn executeVisionPathTargetsForTest(
     args_json: []const u8,
     targets: []const command_admission.VisionPathExecutionTarget,
 ) !ToolExecutionResult {
-    return executeToolCallAuthorized(rt.context(), .{
+    var ctx = rt.context();
+    ctx.allow_disabled_provider_tools = rt.provider != .codex;
+    return executeToolCallAuthorized(ctx, .{
         .call_allocator = alloc,
         .result_allocator = alloc,
         .call = .{ .id = "vision-call", .name = "vision", .arguments_json = args_json },

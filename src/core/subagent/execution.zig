@@ -49,7 +49,7 @@ else
 const Allocator = std.mem.Allocator;
 
 pub const TurnPreferences = struct {
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     model: []const u8,
     effort: types.ReasoningEffort,
 };

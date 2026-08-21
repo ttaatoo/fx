@@ -1674,7 +1674,7 @@ const FakeApp = struct {
     workspace_root: []u8,
     tool_registry: tool_dispatch.Registry = .{},
     selected_model: std.ArrayList(u8) = .empty,
-    selected_provider: model_provider.ProviderId = .gateway,
+    selected_provider: model_provider.ProviderId = .xai,
     auth: auth_runtime.Runtime = .{},
     permission_engine: permissions.PermissionEngine = .{},
     permission_state: app_permission_runtime.State = .{},

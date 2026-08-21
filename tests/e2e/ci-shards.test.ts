@@ -101,8 +101,8 @@ describe("CI shard planner", () => {
   test("an exact relative path does not select a colliding Bun test basename", () => {
     const root = mkdtempSync(join(tmpdir(), "fx-ci-shard-exact-path-"));
     const marker = join(root, "loaded.txt");
-    const exact = "gateway-stream-lifecycle.test.ts";
-    const collision = "tui-gateway-stream-lifecycle.test.ts";
+    const exact = "exact-path.test.ts";
+    const collision = "prefix-exact-path.test.ts";
     try {
       for (const [filename, label] of [[exact, "exact"], [collision, "collision"]]) {
         writeFileSync(

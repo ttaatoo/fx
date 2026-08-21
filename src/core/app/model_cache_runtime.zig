@@ -10,17 +10,7 @@ const io_mod = @import("../shared/io.zig");
 const list_window = @import("../shared/list_window.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const types = @import("../shared/types.zig");
-const test_builtin_gateway = if (@import("builtin").is_test)
-    @import("../../builtins/gateway.zig")
-else
-    struct {};
-const test_gateway_client = if (@import("builtin").is_test)
-    @import("../../gateway/client.zig")
-else
-    struct {};
-
 const Allocator = std.mem.Allocator;
-const e2e_gateway_models_url_env = "FX_E2E_GATEWAY_MODELS_URL";
 
 const ModelCacheState = enum {
     idle,
@@ -773,45 +763,6 @@ fn findCatalogModel(catalog: []const model_catalog.ModelCatalogEntry, model: []c
     return null;
 }
 
-var stable_test_environ: ?*std.process.Environ.Map = null;
-
-fn stableEmptyTestEnviron() !*const std.process.Environ.Map {
-    if (stable_test_environ) |map| return map;
-
-    const alloc = std.heap.page_allocator;
-    const map = try alloc.create(std.process.Environ.Map);
-    map.* = std.process.Environ.Map.init(alloc);
-    stable_test_environ = map;
-    return map;
-}
-
-const TestEnv = struct {
-    alloc: Allocator,
-    map: std.process.Environ.Map,
-
-    fn install(alloc: Allocator, models_url: []const u8) !*TestEnv {
-        _ = try stableEmptyTestEnviron();
-
-        const self = try alloc.create(TestEnv);
-        errdefer alloc.destroy(self);
-        self.* = .{
-            .alloc = alloc,
-            .map = std.process.Environ.Map.init(alloc),
-        };
-        errdefer self.map.deinit();
-        try self.map.put(e2e_gateway_models_url_env, models_url);
-        io_mod.setEnvironMap(&self.map);
-        return self;
-    }
-
-    fn deinit(self: *TestEnv) void {
-        if (stable_test_environ) |map| io_mod.setEnvironMap(map);
-        self.map.deinit();
-        const alloc = self.alloc;
-        alloc.destroy(self);
-    }
-};
-
 fn waitForWarmup(runtime: *Runtime) !void {
     var remaining_ms: u64 = 5000;
     while (runtime.isLoading() and remaining_ms > 0) : (remaining_ms -= 1) {
@@ -1214,69 +1165,6 @@ test "model cache repeated auth changes join stale loads before publication" {
     for (0..128) |iteration| try runRepeatedAuthChangeCycle(iteration);
 }
 
-test "model cache warmup publishes a snapshot and filtered completion" {
-    var fixture = try test_gateway_client.TestModelCatalogFixture.initPrivate();
-    defer fixture.deinit();
-    try fixture.start();
-    try std.testing.expect(fixture.waitForAcceptStart(5000));
-
-    const models_url = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "http://127.0.0.1:{d}/v1/models",
-        .{fixture.port()},
-    );
-    defer std.testing.allocator.free(models_url);
-    const env = try TestEnv.install(std.testing.allocator, models_url);
-    defer env.deinit();
-
-    var runtime = Runtime.init(std.testing.allocator, "/v1/models");
-    defer runtime.deinit();
-    runtime.startWarmup(test_builtin_gateway.model_catalog_provider, authenticatedCatalogAccess("test-key", "team_123"));
-    try waitForWarmup(&runtime);
-
-    const provenance = runtime.outcome.loaded.?;
-    try std.testing.expectEqual(model_catalog.AccessLevel.authenticated, provenance.access.level);
-    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, provenance.access.source.?);
-    try std.testing.expect(!provenance.access.private_models_may_be_hidden);
-    try std.testing.expect(!provenance.anonymous_fallback_used);
-    try std.testing.expect(provenance.fallback_failure == null);
-    try std.testing.expect(runtime.outcome.last_failure == null);
-
-    var snapshot = (try runtime.snapshotCachedModelIds(std.testing.allocator)).?;
-    defer collections.freeStringList(std.testing.allocator, &snapshot);
-    try std.testing.expectEqual(@as(usize, 4), snapshot.items.len);
-    try std.testing.expectEqualStrings("openai/gpt-5", snapshot.items[0]);
-    try std.testing.expectEqualStrings("anthropic/claude-opus-4", snapshot.items[1]);
-    try std.testing.expect(modelIdListContains(snapshot.items, "anthropic/claude-sonnet-4"));
-    try std.testing.expect(modelIdListContains(snapshot.items, "private/blue-hornbill"));
-
-    const metadata = runtime.metadataForModel("openai/gpt-5").?;
-    try std.testing.expect(metadata.supports_tool_use);
-    try std.testing.expect(metadata.supports_reasoning);
-    try std.testing.expect(metadata.supports_vision);
-    try std.testing.expect(metadata.supports_file_input);
-    try std.testing.expect(metadata.supports_web_search);
-    try std.testing.expect(metadata.supports_explicit_caching);
-    try std.testing.expect(metadata.supports_implicit_caching);
-    try std.testing.expectEqual(@as(?u32, 256_000), metadata.context_window);
-    try std.testing.expectEqual(@as(?u32, 32_000), metadata.max_output_tokens);
-
-    var completions: [2][]const u8 = undefined;
-    const count = runtime.modelCompletions("OPUS", completions[0..]);
-    try std.testing.expectEqual(@as(usize, 1), count);
-    try std.testing.expectEqualStrings("anthropic/claude-opus-4", completions[0]);
-
-    var private_completions: [1][]const u8 = undefined;
-    const private_count = runtime.modelCompletions("blue", private_completions[0..]);
-    try std.testing.expectEqual(@as(usize, 1), private_count);
-    try std.testing.expectEqualStrings("private/blue-hornbill", private_completions[0]);
-    try std.testing.expectEqualStrings("private/blue-hornbill", runtime.catalogModelCompletion("private/blue-hornbill").?);
-    try std.testing.expect(runtime.catalogModelCompletion("private/blue") == null);
-
-    try std.testing.expectEqualStrings("team_123", fixture.capturedHeaderValue(test_gateway_client.vercel_ai_gateway_team_header).?);
-    if (fixture.failure()) |err| return err;
-}
-
 test "model menu owns resolved catalog state and filters without changing catalog order" {
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc, "/v1/models");
@@ -1370,106 +1258,6 @@ test "model menu snapshot construction cleans every allocation failure" {
         } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
         try std.testing.expect(failing.has_induced_failure);
         try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
-    }
-}
-
-test "model cache completion hydrates an open menu and reports once" {
-    var fixture = try test_gateway_client.TestModelCatalogFixture.initPrivate();
-    defer fixture.deinit();
-    try fixture.start();
-    try std.testing.expect(fixture.waitForAcceptStart(5000));
-
-    const models_url = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "http://127.0.0.1:{d}/v1/models",
-        .{fixture.port()},
-    );
-    defer std.testing.allocator.free(models_url);
-    const env = try TestEnv.install(std.testing.allocator, models_url);
-    defer env.deinit();
-
-    var runtime = Runtime.init(std.testing.allocator, "/v1/models");
-    defer runtime.deinit();
-    runtime.startWarmup(test_builtin_gateway.model_catalog_provider, authenticatedCatalogAccess("test-key", "team_123"));
-    try runtime.openMenu();
-    try std.testing.expectEqual(ModelMenuLoadState.loading, runtime.menu.load_state);
-
-    var changed = false;
-    var remaining_ms: u64 = 5000;
-    while (!changed and remaining_ms > 0) : (remaining_ms -= 1) {
-        changed = try runtime.pollLoadTransition();
-        if (!changed) io_mod.sleep(std.time.ns_per_ms);
-    }
-    try std.testing.expect(changed);
-    try std.testing.expectEqual(ModelMenuLoadState.ready, runtime.menu.load_state);
-    try std.testing.expectEqual(model_catalog.AccessLevel.authenticated, runtime.menu.catalog_state.access_level.?);
-    try std.testing.expect(runtime.menu.catalog_state.public_only_reason == null);
-    try std.testing.expect(!runtime.menu.catalog_state.private_models_hidden);
-    try std.testing.expect(runtime.menu.catalog_state.failure == null);
-    try std.testing.expectEqual(@as(usize, 4), runtime.menu.items.items.len);
-    try std.testing.expect(!(try runtime.pollLoadTransition()));
-
-    runtime.reset();
-    try std.testing.expect(!runtime.menu.active);
-    try std.testing.expectEqual(ModelCacheState.idle, runtime.state);
-    if (fixture.failure()) |err| return err;
-}
-
-test "model cache reset replaces ready public catalog with team catalog" {
-    var runtime = Runtime.init(std.testing.allocator, "/v1/models");
-    defer runtime.deinit();
-
-    {
-        var fixture = try test_gateway_client.TestModelCatalogFixture.init();
-        defer fixture.deinit();
-        try fixture.start();
-        try std.testing.expect(fixture.waitForAcceptStart(5000));
-
-        const models_url = try std.fmt.allocPrint(
-            std.testing.allocator,
-            "http://127.0.0.1:{d}/v1/models",
-            .{fixture.port()},
-        );
-        defer std.testing.allocator.free(models_url);
-        const env = try TestEnv.install(std.testing.allocator, models_url);
-        defer env.deinit();
-
-        runtime.startWarmup(test_builtin_gateway.model_catalog_provider, .{ .public_only = .no_credential });
-        try waitForWarmup(&runtime);
-
-        var snapshot = (try runtime.snapshotCachedModelIds(std.testing.allocator)).?;
-        defer collections.freeStringList(std.testing.allocator, &snapshot);
-        try std.testing.expect(!modelIdListContains(snapshot.items, "private/blue-hornbill"));
-        try std.testing.expect(fixture.capturedHeaderValue("authorization") == null);
-        try std.testing.expect(fixture.capturedHeaderValue(test_gateway_client.vercel_ai_gateway_team_header) == null);
-        if (fixture.failure()) |err| return err;
-    }
-
-    runtime.reset();
-
-    {
-        var fixture = try test_gateway_client.TestModelCatalogFixture.initPrivate();
-        defer fixture.deinit();
-        try fixture.start();
-        try std.testing.expect(fixture.waitForAcceptStart(5000));
-
-        const models_url = try std.fmt.allocPrint(
-            std.testing.allocator,
-            "http://127.0.0.1:{d}/v1/models",
-            .{fixture.port()},
-        );
-        defer std.testing.allocator.free(models_url);
-        const env = try TestEnv.install(std.testing.allocator, models_url);
-        defer env.deinit();
-
-        runtime.startWarmup(test_builtin_gateway.model_catalog_provider, authenticatedCatalogAccess("team-key", "team_123"));
-        try waitForWarmup(&runtime);
-
-        var snapshot = (try runtime.snapshotCachedModelIds(std.testing.allocator)).?;
-        defer collections.freeStringList(std.testing.allocator, &snapshot);
-        try std.testing.expect(modelIdListContains(snapshot.items, "private/blue-hornbill"));
-        try std.testing.expectEqualStrings("team_123", fixture.capturedHeaderValue(test_gateway_client.vercel_ai_gateway_team_header).?);
-        if (fixture.failure()) |err| return err;
     }
 }
 

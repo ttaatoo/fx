@@ -368,7 +368,7 @@ pub const PickerView = struct {
     available_sources: SourceSet,
     selected_choice: ?Choice,
     active_source: ?credentials.Source,
-    active_provider: model_provider.ProviderId = .gateway,
+    active_provider: model_provider.ProviderId = .xai,
     include_skip: bool,
     stage: PickerStage = .root,
     fx_login_session_available: bool = false,
@@ -385,13 +385,8 @@ pub const PickerView = struct {
 
     pub fn choiceCount(self: PickerView) usize {
         return switch (self.stage) {
-            .root => if (self.include_skip)
-                if (comptime host_target.is_wasm) 2 else 4
-            else if (comptime host_target.is_wasm)
-                4
-            else
-                6,
-            .provider => 4,
+            .root => if (comptime host_target.is_wasm) 0 else 2,
+            .provider => 3,
             .sign_in, .api_key => 0,
             .change_team => blk: {
                 var count: usize = 0;
@@ -406,42 +401,17 @@ pub const PickerView = struct {
 
     pub fn choiceAt(self: PickerView, index: usize) ?Choice {
         return switch (self.stage) {
-            .root => if (self.include_skip)
-                if (comptime host_target.is_wasm)
-                    switch (index) {
-                        0 => .{ .action = .login },
-                        1 => .{ .action = .setup },
-                        else => null,
-                    }
-                else switch (index) {
-                    0 => .{ .action = .login },
-                    1 => .{ .action = .chatgpt_login },
-                    2 => .{ .action = .grok_login },
-                    3 => .{ .action = .setup },
-                    else => null,
-                }
-            else if (comptime host_target.is_wasm)
-                switch (index) {
-                    0 => .{ .action = .login },
-                    1 => .{ .action = .setup },
-                    2 => .{ .action = .change_team },
-                    3 => .{ .action = .switch_credential },
-                    else => null,
-                }
+            .root => if (comptime host_target.is_wasm)
+                null
             else switch (index) {
-                0 => .{ .action = .login },
+                0 => .{ .action = .grok_login },
                 1 => .{ .action = .chatgpt_login },
-                2 => .{ .action = .grok_login },
-                3 => .{ .action = .setup },
-                4 => .{ .action = .change_team },
-                5 => .{ .action = .switch_credential },
                 else => null,
             },
             .provider => switch (index) {
-                0 => .{ .provider = .gateway },
-                1 => .{ .provider = .codex },
-                2 => .{ .provider = .anthropic },
-                3 => .{ .provider = .xai },
+                0 => .{ .provider = .xai },
+                1 => .{ .provider = .anthropic },
+                2 => .{ .provider = .codex },
                 else => null,
             },
             .sign_in, .api_key => null,
@@ -482,7 +452,7 @@ pub const PickerView = struct {
             .provider => |provider| model_provider.label(provider),
             .source => |source| credentials.sourceLabel(source),
             .action => |action| switch (action) {
-                .login => "Sign in with Vercel",
+                .login => "Retired Gateway sign-in",
                 .chatgpt_login => "Sign in with Codex",
                 .grok_login => "Sign in with SuperGrok",
                 .setup => if (self.include_skip) "Add an API key" else "API key",
@@ -755,7 +725,7 @@ pub const Runtime = struct {
     picker_selection: ?Choice = null,
     picker_include_skip: bool = false,
     picker_stage: PickerStage = .root,
-    provider_picker_active: model_provider.ProviderId = .gateway,
+    provider_picker_active: model_provider.ProviderId = .xai,
     fx_login_session_available: bool = false,
     team_selection: ?login_flow.TeamSelection = null,
     team_query: std.ArrayList(u8) = .empty,
@@ -1408,17 +1378,6 @@ pub const Runtime = struct {
                     loadRuntimeCredentialSource,
                 ),
             .anthropic => self.selectDirectProvider(alloc, provider),
-            .gateway => if (self.credentialSource() != .chatgpt_subscription and
-                self.credentialSource() != .custom_provider and
-                self.credentialSource() != .grok_subscription)
-                false
-            else
-                @as(?bool, try self.reselectByPrecedenceWithDeps(
-                    alloc,
-                    self,
-                    probeCredentialSource,
-                    loadRuntimeCredentialSource,
-                )),
         };
     }
 
@@ -2282,7 +2241,7 @@ test "logout reconciliation adopts a newer concurrent fx login" {
     try std.testing.expect(runtime.source_inventory.contains(.fx_login));
 }
 
-test "auth picker root starts on sign in and keeps sources in the switch stage" {
+test "auth picker root starts on SuperGrok sign in" {
     const alloc = std.testing.allocator;
     var runtime: Runtime = .{};
     defer runtime.deinit(alloc);
@@ -2296,9 +2255,9 @@ test "auth picker root starts on sign in and keeps sources in the switch stage" 
 
     const picker = runtime.pickerView();
     try std.testing.expect(picker.active);
-    try std.testing.expect((Choice{ .action = .login }).eql(picker.selected_choice.?));
-    try std.testing.expectEqual(@as(usize, 6), picker.choiceCount());
-    try std.testing.expect(picker.choiceAt(6) == null);
+    try std.testing.expect((Choice{ .action = .grok_login }).eql(picker.selected_choice.?));
+    try std.testing.expectEqual(@as(usize, 2), picker.choiceCount());
+    try std.testing.expect(picker.choiceAt(2) == null);
 }
 
 test "credential switcher excludes provider-routed ChatGPT sessions" {
@@ -2315,7 +2274,7 @@ test "credential switcher excludes provider-routed ChatGPT sessions" {
     try std.testing.expect((Choice{ .action = .automatic }).eql(picker.choiceAt(1).?));
 }
 
-test "auth picker navigation wraps across the six hub actions" {
+test "auth picker navigation wraps across SuperGrok and Codex" {
     const alloc = std.testing.allocator;
     var runtime: Runtime = .{};
     runtime.source_inventory = SourceSet.initMany(&.{ .ai_gateway_api_key, .fx_login });
@@ -2325,16 +2284,8 @@ test "auth picker navigation wraps across the six hub actions" {
     try std.testing.expect((Choice{ .action = .chatgpt_login }).eql(runtime.pickerView().selected_choice.?));
     try std.testing.expect(runtime.movePicker(1));
     try std.testing.expect((Choice{ .action = .grok_login }).eql(runtime.pickerView().selected_choice.?));
-    try std.testing.expect(runtime.movePicker(1));
-    try std.testing.expect((Choice{ .action = .setup }).eql(runtime.pickerView().selected_choice.?));
-    try std.testing.expect(runtime.movePicker(1));
-    try std.testing.expect((Choice{ .action = .change_team }).eql(runtime.pickerView().selected_choice.?));
-    try std.testing.expect(runtime.movePicker(1));
-    try std.testing.expect((Choice{ .action = .switch_credential }).eql(runtime.pickerView().selected_choice.?));
-    try std.testing.expect(runtime.movePicker(1));
-    try std.testing.expect((Choice{ .action = .login }).eql(runtime.pickerView().selected_choice.?));
     try std.testing.expect(runtime.movePicker(-1));
-    try std.testing.expect((Choice{ .action = .switch_credential }).eql(runtime.pickerView().selected_choice.?));
+    try std.testing.expect((Choice{ .action = .chatgpt_login }).eql(runtime.pickerView().selected_choice.?));
 }
 
 test "auth picker selection closes before returning its typed choice" {
@@ -2345,7 +2296,7 @@ test "auth picker selection closes before returning its typed choice" {
     try std.testing.expect(runtime.takePickerChoice(alloc) == null);
     runtime.openPicker(alloc);
 
-    try std.testing.expect((Choice{ .action = .login }).eql(runtime.takePickerChoice(alloc).?));
+    try std.testing.expect((Choice{ .action = .grok_login }).eql(runtime.takePickerChoice(alloc).?));
     try std.testing.expect(!runtime.pickerView().active);
 }
 
@@ -2356,10 +2307,9 @@ test "auth picker without credentials exposes acquisition actions" {
 
     const picker = runtime.pickerView();
     try std.testing.expect(picker.active_source == null);
-    try std.testing.expect((Choice{ .action = .login }).eql(picker.selected_choice.?));
+    try std.testing.expect((Choice{ .action = .grok_login }).eql(picker.selected_choice.?));
     try std.testing.expectEqual(@as(usize, 0), picker.available_sources.count());
-    try std.testing.expectEqual(@as(usize, 6), picker.choiceCount());
-    try std.testing.expect(!picker.choiceEnabled(.{ .action = .change_team }));
+    try std.testing.expectEqual(@as(usize, 2), picker.choiceCount());
     try std.testing.expectEqualStrings("missing", picker.activeSourceLabel());
 }
 
@@ -2370,13 +2320,11 @@ test "auth onboarding picker exposes the setup paths" {
 
     const picker = runtime.pickerView();
     try std.testing.expect(picker.include_skip);
-    try std.testing.expectEqual(@as(usize, 4), picker.choiceCount());
-    try std.testing.expect((Choice{ .action = .login }).eql(picker.choiceAt(0).?));
+    try std.testing.expectEqual(@as(usize, 2), picker.choiceCount());
+    try std.testing.expect((Choice{ .action = .grok_login }).eql(picker.choiceAt(0).?));
     try std.testing.expect((Choice{ .action = .chatgpt_login }).eql(picker.choiceAt(1).?));
-    try std.testing.expect((Choice{ .action = .grok_login }).eql(picker.choiceAt(2).?));
-    try std.testing.expect((Choice{ .action = .setup }).eql(picker.choiceAt(3).?));
-    try std.testing.expectEqualStrings("Add an API key", picker.choiceLabel(picker.choiceAt(3).?));
-    try std.testing.expect(picker.choiceAt(4) == null);
+    try std.testing.expectEqualStrings("Sign in with SuperGrok", picker.choiceLabel(picker.choiceAt(0).?));
+    try std.testing.expect(picker.choiceAt(2) == null);
 }
 
 test "clearing a remembered choice re-resolves even when no login was active" {
@@ -2577,12 +2525,13 @@ test "auth runtime saves and reloads through its injected secret store" {
         if (runtime.takeApiKeySaveResult(alloc)) |value| break value;
     };
 
-    try std.testing.expect(result == .saved);
+    // Stored Gateway keys are retired: validate and persist still run, but reload
+    // cannot adopt a stored_key credential.
+    try std.testing.expect(result == .reload_failed);
     try std.testing.expectEqual(@as(usize, 1), fixture.validate_calls);
     try std.testing.expectEqual(@as(usize, 1), fixture.store_calls);
-    try std.testing.expectEqual(@as(usize, 1), fixture.load_calls);
-    try std.testing.expectEqual(credentials.Source.stored_key, runtime.credentialSource().?);
-    try std.testing.expectEqualStrings("loaded-key", runtime.apiKey().?);
+    try std.testing.expect(runtime.credentialSource() == null);
+    try std.testing.expect(runtime.apiKey() == null);
 }
 
 test "an empty api key entry starts no save worker" {

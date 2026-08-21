@@ -8,14 +8,15 @@ const permissions = @import("../../../permissions/permissions.zig");
 const worker_runtime = @import("../../worker_runtime.zig");
 const background_runtime = @import("../../../background/background_runtime.zig");
 const builtin_context = @import("../../../../builtins/context.zig");
-const builtin_gateway = @import("../../../../builtins/gateway.zig");
-const gateway_client = @import("../../../../gateway/client.zig");
+const gateway_client = @import("../../../../gateway/http.zig");
 const builtin_tools = @import("../../../../builtins/tools.zig");
 const session_runtime = @import("../../../session/session.zig");
 const session_codec = @import("../../../session/session_codec.zig");
 const command_replay_store = @import("../../../session/command_replay_store.zig");
 const session_child_store = @import("../../../session/session_child_store.zig");
 const gateway_json = @import("../../../gateway/gateway_json.zig");
+const gateway_schema = @import("../../../tooling/gateway_schema.zig");
+const tool_advertisement = @import("../../../tooling/tool_advertisement.zig");
 const gateway_failure_diagnostics = @import("../../../gateway/gateway_failure_diagnostics.zig");
 const lifecycle_hooks = @import("../../../hooks/hooks.zig");
 const model_capabilities = @import("../../../config/model_capabilities.zig");
@@ -262,10 +263,11 @@ pub const FakeGateway = struct {
     }
 
     pub fn provider(self: *FakeGateway) agent_stream_provider.Provider {
-        var result = builtin_gateway.agent_stream_provider;
-        result.context = self;
-        result.stream_fn = fakeGatewayStream;
-        return result;
+        return .{
+            .context = self,
+            .build_fn = fakeGatewayBuild,
+            .stream_fn = fakeGatewayStream,
+        };
     }
 
     fn stream(
@@ -355,7 +357,7 @@ pub const FakeGateway = struct {
                     completion.finish_reason orelse if (completion.tool_calls.len > 0) .tool_calls else .stop,
                 .usage = completion.usage,
             },
-            .generation_origin = "https://ai-gateway.vercel.sh",
+            .generation_origin = "https://cli-chat-proxy.grok.com/v1",
         };
     }
 
@@ -374,6 +376,150 @@ pub const ModelCapabilityOverride = struct {
     model: []const u8,
     capabilities: model_capabilities.Capabilities,
 };
+
+fn fakeGatewayBuild(
+    _: ?*anyopaque,
+    alloc: Allocator,
+    request: agent_stream_provider.BuildRequest,
+) ![]u8 {
+    const budget: ?gateway_json.BuildBudget = if (request.budget) |value|
+        .{ .deadline = value.deadline, .cancel_flag = value.cancel_flag }
+    else
+        null;
+    if (budget) |active| try active.check();
+
+    if (request.verified_images) |images| {
+        const response_format = request.response_format orelse
+            return error.MissingStructuredResponseFormat;
+        const body = try gateway_json.buildGatewayRequestBodyWithVerifiedImagesAndBudget(
+            alloc,
+            request.serialized_tools,
+            request.messages,
+            images,
+            request.provider_options,
+            request.tool_choice,
+            .{
+                .name = response_format.name,
+                .description = response_format.description,
+                .schema_json = response_format.schema_json,
+            },
+            budget orelse .{},
+        );
+        return finalizeFakeGatewayRequestBody(alloc, request.model, body);
+    }
+    if (request.response_format != null) return error.StructuredResponseRequiresVerifiedImages;
+
+    if (request.vision_mode == .unavailable and request.selected_dynamic_tool_schemas.len == 0) {
+        const body = if (budget) |active|
+            gateway_json.buildGatewayRequestBodyWithOptionsAndBudget(
+                alloc,
+                request.serialized_tools,
+                request.messages,
+                request.provider_options,
+                request.tool_choice,
+                request.max_output_tokens,
+                active,
+            )
+        else
+            gateway_json.buildGatewayRequestBodyWithOptionsAndOutputLimit(
+                alloc,
+                request.serialized_tools,
+                request.messages,
+                request.provider_options,
+                request.tool_choice,
+                request.max_output_tokens,
+            );
+        return finalizeFakeGatewayRequestBody(alloc, request.model, try body);
+    }
+
+    const vision_schema = if (request.vision_mode != .unavailable)
+        try writeVisionGatewaySchema(alloc, request.tool_registry)
+    else
+        null;
+    defer if (vision_schema) |schema| alloc.free(schema);
+
+    if (request.vision_mode == .required) {
+        const tools_json = try std.fmt.allocPrint(alloc, "[{s}]", .{vision_schema.?});
+        defer alloc.free(tools_json);
+        const body = if (budget) |active|
+            gateway_json.buildGatewayRequiredToolRequestBodyWithOptionsAndBudget(
+                alloc,
+                tools_json,
+                request.messages,
+                request.provider_options,
+                request.max_output_tokens,
+                active,
+            )
+        else
+            gateway_json.buildGatewayRequiredToolRequestBodyWithOptionsAndOutputLimit(
+                alloc,
+                tools_json,
+                request.messages,
+                request.provider_options,
+                request.max_output_tokens,
+            );
+        return finalizeFakeGatewayRequestBody(alloc, request.model, try body);
+    }
+
+    var schemas: std.ArrayList([]const u8) = .empty;
+    defer schemas.deinit(alloc);
+    try schemas.appendSlice(alloc, request.selected_dynamic_tool_schemas);
+    if (vision_schema) |schema| try schemas.append(alloc, schema);
+    const tools_json = try tool_advertisement.buildGatewayToolsJsonWithSelectedDynamicSchemas(
+        alloc,
+        request.serialized_tools,
+        schemas.items,
+    );
+    defer alloc.free(tools_json);
+    const body = if (budget) |active|
+        gateway_json.buildGatewayRequestBodyWithOptionsAndBudget(
+            alloc,
+            tools_json,
+            request.messages,
+            request.provider_options,
+            request.tool_choice,
+            request.max_output_tokens,
+            active,
+        )
+    else
+        gateway_json.buildGatewayRequestBodyWithOptionsAndOutputLimit(
+            alloc,
+            tools_json,
+            request.messages,
+            request.provider_options,
+            request.tool_choice,
+            request.max_output_tokens,
+        );
+    return finalizeFakeGatewayRequestBody(alloc, request.model, try body);
+}
+
+fn finalizeFakeGatewayRequestBody(
+    alloc: Allocator,
+    model: []const u8,
+    body: []u8,
+) ![]u8 {
+    if (!std.mem.eql(u8, model, "zai/glm-5.2")) return body;
+
+    errdefer alloc.free(body);
+    const identified = try gateway_json.withRequestUserAgent(
+        alloc,
+        body,
+        gateway_client.user_agent,
+    );
+    alloc.free(body);
+    return identified;
+}
+
+fn writeVisionGatewaySchema(
+    alloc: Allocator,
+    registry: tool_dispatch.Registry,
+) ![]u8 {
+    const vision_tool = registry.lookup("vision") orelse return error.VisionToolNotRegistered;
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    try gateway_schema.writeBuiltinFunctionSchema(alloc, &out.writer, vision_tool.gateway_schema);
+    return out.toOwnedSlice();
+}
 
 fn fakeGatewayStream(
     context: ?*anyopaque,
@@ -901,6 +1047,9 @@ pub const FakeAgentRuntimeDeps = struct {
         if (self.last_validated_arguments) |value| self.alloc.free(value);
         self.last_validated_arguments = try self.alloc.dupe(u8, call.arguments_json);
         try self.record("validate:{s}", .{call.name});
+        if (std.mem.eql(u8, call.name, "vision")) {
+            return .{ .failure = try arena.dupe(u8, "Unsupported tool: vision") };
+        }
         if (self.validation_result_index < self.validation_results.len) {
             const result = self.validation_results[self.validation_result_index];
             self.validation_result_index += 1;
@@ -923,6 +1072,9 @@ pub const FakeAgentRuntimeDeps = struct {
         const self: *FakeAgentRuntimeDeps = @ptrCast(@alignCast(raw));
         try self.availability_checked_names.append(self.alloc, try self.alloc.dupe(u8, call.name));
         try self.record("availability:{s}", .{call.name});
+        if (std.mem.eql(u8, call.name, "vision")) {
+            return try arena.dupe(u8, "Unsupported tool: vision");
+        }
         for (self.availability_failure_names) |name| {
             if (std.mem.eql(u8, name, call.name)) {
                 return try arena.dupe(u8, tool_dispatch.web_search_unavailable_message);

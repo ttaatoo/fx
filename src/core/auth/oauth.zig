@@ -4,10 +4,10 @@ const secret = @import("secret.zig");
 
 const Allocator = std.mem.Allocator;
 
-// Sign in with Vercel supports exactly openid, email, profile and offline_access,
-// and silently filters anything else. fx only needs identity plus a refresh token,
-// so it asks for those two and nothing more. An earlier `use:ai-gateway` entry was
-// never a real scope: it was dropped on every grant and bought nothing.
+// Device-code grants ask for identity plus a refresh token. Issuers that only
+// accept openid, email, profile, and offline_access silently drop anything else.
+// An earlier `use:ai-gateway` entry was never a real scope: it was dropped on
+// every grant and bought nothing.
 pub const default_scope = "openid offline_access";
 
 /// Returns the first requested scope the issuer did not grant. A silently reduced

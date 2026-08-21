@@ -24,7 +24,7 @@ Requirements:
 
 * interactive terminal for manual shell testing
 
-* a Vercel OAuth session via `fx login` for model-backed flows. macOS Keychain API keys (via `fx setup`), `AI_GATEWAY_API_KEY`, and `VERCEL_OIDC_TOKEN` are also supported
+* a SuperGrok session via `fx login grok`, or Anthropic via `ANTHROPIC_API_KEY` / `~/.fx/providers.json`. Codex (`fx login codex`) is optional. This fork does not use Vercel AI Gateway.
 
 Common commands:
 

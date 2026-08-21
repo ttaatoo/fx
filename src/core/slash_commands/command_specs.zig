@@ -1704,7 +1704,7 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "Run one noninteractive request") != null);
     try std.testing.expect(std.mem.find(u8, text, "Draft or publish a GitHub issue") != null);
     try std.testing.expect(std.mem.find(u8, text, "credits|balance") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Show the AI Gateway credit balance") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Gateway credits") != null);
     try std.testing.expect(std.mem.find(u8, text, "Flags:") != null);
     try std.testing.expect(std.mem.find(u8, text, "--context-limit <spec>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Set name=bytes|off; repeatable") != null);

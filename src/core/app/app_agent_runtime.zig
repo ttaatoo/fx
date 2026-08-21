@@ -39,10 +39,6 @@ const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const tool_mcp_runtime = @import("../tooling/tool_mcp_runtime.zig");
 const context_contract = @import("../workspace/context_contract.zig");
 const model_catalog = @import("../gateway/model_catalog.zig");
-const test_builtin_gateway = if (@import("builtin").is_test)
-    @import("../../builtins/gateway.zig")
-else
-    struct {};
 const test_builtin_tools = if (@import("builtin").is_test)
     @import("../../builtins/tools.zig")
 else
@@ -292,7 +288,7 @@ pub fn Runtime(comptime App: type) type {
                 ctx.on_web_fetch_progress = app_callbacks.Bindings(App).onWebFetchProgress;
             }
             if (comptime @hasField(App, "web_search_runtime")) {
-                if (model_provider.usesGatewayAuxiliaries(provider_runtime.provider(app))) {
+                if (false) {
                     app.web_search_runtime.configure(.{
                         .api_key = app.auth.apiKey() orelse "",
                         .gateway_team = app.auth.gatewayTeam(),
@@ -1057,10 +1053,6 @@ pub fn Runtime(comptime App: type) type {
                 app.subagentProviderRoutes()
             else
                 subagent_agent_adapter.ProviderRoutes{
-                    .gateway = .{
-                        .agent_stream_provider = tool_context.agent_stream_provider,
-                        .permission_reviewer_provider = tool_context.permission_reviewer_provider,
-                    },
                     .codex = .{
                         .agent_stream_provider = tool_context.agent_stream_provider,
                         .permission_reviewer_provider = tool_context.permission_reviewer_provider,
@@ -1445,7 +1437,7 @@ const FakeApp = struct {
     workspace_root: []const u8 = "/tmp/workspace",
     auth: auth_runtime.Runtime = .{},
     selected_model: std.ArrayList(u8) = .empty,
-    selected_provider: model_provider.ProviderId = .gateway,
+    selected_provider: model_provider.ProviderId = .xai,
     permission_engine: permissions.PermissionEngine = .{},
     agent_step_limit: usize = 8,
     fast_mode: bool = true,
@@ -1475,7 +1467,7 @@ const FakeApp = struct {
     diff_blocks: usize = 0,
     web_fetch_runtime: web_fetch_runtime.Runtime = web_fetch_runtime.Runtime.init(.{}),
     web_search_runtime: web_search_runtime.Runtime = web_search_runtime.Runtime.init(.{
-        .provider = test_builtin_gateway.default_web_search_provider,
+        .provider = null,
     }),
     web_search_models_path: []const u8 = "/models",
     lifecycle_runtime: hooks.Runtime,
@@ -1495,7 +1487,7 @@ const FakeApp = struct {
         errdefer app.context_snapshot.deinit(alloc);
         var credential = credentials.Credential{
             .token = try alloc.dupe(u8, "api-key"),
-            .source = .ai_gateway_api_key,
+            .source = .custom_provider,
         };
         defer credential.deinit(alloc);
         _ = app.auth.adoptCredential(alloc, &credential);
@@ -1691,10 +1683,19 @@ const FakeApp = struct {
     }
 };
 
+fn testAgentStreamBuild(
+    _: ?*anyopaque,
+    alloc: Allocator,
+    _: agent_stream_provider.BuildRequest,
+) anyerror![]u8 {
+    return alloc.dupe(u8, "{}");
+}
+
 fn testAgentStreamProvider(stream_fn: agent_stream_provider.StreamFn) agent_stream_provider.Provider {
-    var provider = test_builtin_gateway.agent_stream_provider;
-    provider.stream_fn = stream_fn;
-    return provider;
+    return .{
+        .build_fn = testAgentStreamBuild,
+        .stream_fn = stream_fn,
+    };
 }
 
 const TestCatalogProvider = struct {
@@ -1721,7 +1722,7 @@ const TestCatalogProvider = struct {
         self.saw_expected_input =
             std.mem.eql(u8, input.access.authorizationCredential() orelse "", "api-key") and
             input.access.teamContext() == null and
-            input.access.credentialSource() == .ai_gateway_api_key and
+            input.access.credentialSource() == .custom_provider and
             std.mem.eql(u8, input.endpoint, "/catalog") and
             input.cancel_flag == null and
             input.view == .full;
@@ -1783,13 +1784,10 @@ test "app agent runtime builds tool context from app state and MCP callbacks" {
     try std.testing.expect(ctx.fast_mode);
     try std.testing.expectEqual(types.ReasoningEffort.literal("high"), ctx.effort);
     try std.testing.expect(!ctx.web_search_runtime_ready);
-    try std.testing.expect(ctx.web_search_backend != null);
+    try std.testing.expect(ctx.web_search_backend == null);
     try std.testing.expect(ctx.web_fetch_runtime.? == &app.web_fetch_runtime);
     try std.testing.expect(ctx.web_fetch_progress_ctx != null);
     try std.testing.expect(ctx.on_web_fetch_progress != null);
-    try std.testing.expectEqualStrings("test-model", app.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.gateway_retry_count, app.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.gateway_chat_url, app.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqualStrings("/models", ctx.gateway_models_path);
     try std.testing.expectEqual(@as(usize, 4096), ctx.max_tool_result_bytes);
     try std.testing.expectEqual(types.ToolChoice.none, ctx.first_call_tool_choice);
@@ -1883,42 +1881,10 @@ test "interactive app prepared file mutation callback applies app permission pol
     try std.testing.expect(outcome.execution_authority == null);
 }
 
-test "app prompt projection configures web search then blocks native execution" {
+test "app prompt projection advertises native web_search without a local backend" {
     const alloc = std.testing.allocator;
-    const web_search_contract = @import("../tooling/web_search_contract.zig");
-    const ProviderState = struct {
-        calls: usize = 0,
-    };
-    const FailingWebSearchProvider = struct {
-        fn execute(
-            raw_ctx: ?*anyopaque,
-            _: Allocator,
-            _: web_search_runtime.Inputs,
-            _: web_search_contract.ProviderRequest,
-            _: ?web_search_contract.ProgressFn,
-            _: ?*anyopaque,
-        ) anyerror!web_search_contract.ProviderResponse {
-            const state: *ProviderState = @ptrCast(@alignCast(raw_ctx orelse return error.TestWebSearchProvider));
-            state.calls += 1;
-            return error.TestWebSearchProvider;
-        }
-    };
     var app = try FakeApp.init(alloc);
     defer app.deinit();
-    var provider_state = ProviderState{};
-    var provider = app.web_search_runtime.provider orelse return error.TestExpectedEqual;
-    provider.context = @ptrCast(&provider_state);
-    provider.execute_fn = FailingWebSearchProvider.execute;
-    app.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = provider,
-    });
-
-    app.web_search_runtime.configure(.{
-        .api_key = "stale-key",
-        .worker_model = "stale-model",
-        .gateway_retry_count = 99,
-        .gateway_chat_url = "https://stale.invalid/chat",
-    });
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
@@ -1928,18 +1894,12 @@ test "app prompt projection configures web search then blocks native execution" 
     try Runtime(FakeApp).appendStaticContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
     try app.appendRuntimeContextMessage(arena, &messages);
 
-    try std.testing.expectEqualStrings("stale-key", app.web_search_runtime.api_key);
-
     const validation = try app.validateToolCall(arena, .{
         .id = "search",
         .name = "web_search",
         .arguments_json = "{\"query\":\"x\"}",
     });
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-    try std.testing.expectEqualStrings(app.auth.apiKey().?, app.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(app.selected_model.items, app.web_search_runtime.worker_model);
-    try std.testing.expectEqual(@as(usize, 2), app.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(test_gateway_chat_url, app.web_search_runtime.gateway_chat_url);
 
     const execution = try app.executeToolCall(.{
         .call_allocator = arena,
@@ -1954,12 +1914,9 @@ test "app prompt projection configures web search then blocks native execution" 
         .advertised_dynamic_tool_names = &.{},
         .max_tool_result_bytes = 2048,
     });
-    try std.testing.expectEqualStrings(app.auth.apiKey().?, app.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(app.selected_model.items, app.web_search_runtime.worker_model);
-    try std.testing.expectEqual(@as(usize, 2), app.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(test_gateway_chat_url, app.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqual(.failure, execution.status);
-    try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
+    try std.testing.expect(std.mem.find(u8, execution.model_output, "web_search is unavailable") != null);
+    try std.testing.expect(testToolContext(&app).web_search_backend == null);
 }
 
 test "app ChatGPT route removes Gateway-backed auxiliary capabilities" {

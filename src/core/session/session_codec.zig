@@ -10,7 +10,7 @@ const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 pub const DurableSessionPreferences = struct {
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     model: []u8,
     effort: types.ReasoningEffort,
     fast_mode: bool,
@@ -47,7 +47,7 @@ pub const RecoveryCheckpoint = struct {
     action: types.ModelRecoveryAction,
     tool_state: RecoveryToolState = .none,
     route_model: []u8,
-    route_provider: model_provider.ProviderId = .gateway,
+    route_provider: model_provider.ProviderId = .xai,
     requested_fast_mode: bool,
     fast_mode: bool,
     max_provider_attempts: usize,
@@ -766,12 +766,13 @@ fn decodeStateImpl(alloc: Allocator, source: *std.Io.Reader, limits: DecodeLimit
         return error.InvalidDurableField;
     try expectKey(&json_reader, alloc, "fast_mode");
     const fast_mode = try readBool(&json_reader);
-    var provider: model_provider.ProviderId = .gateway;
+    var provider: model_provider.ProviderId = .xai;
     if (try json_reader.peekNextTokenType() != .object_end) {
         try expectKey(&json_reader, alloc, "provider");
         const provider_raw = try readStringOwned(&json_reader, alloc, 16);
         defer alloc.free(provider_raw);
-        provider = model_provider.parse(provider_raw) orelse return error.InvalidDurableField;
+        provider = model_provider.parse(provider_raw) orelse
+            if (std.ascii.eqlIgnoreCase(provider_raw, "gateway")) .xai else return error.InvalidDurableField;
     }
     try expectToken(try json_reader.next(), .object_end);
 
@@ -965,8 +966,9 @@ pub fn parseRecoveryCheckpoint(alloc: Allocator, value: std.json.Value) !Recover
         .route_model = route_model,
         .route_provider = if (object.get("route_provider")) |provider_value| blk: {
             if (provider_value != .string) return error.InvalidDurableField;
-            break :blk model_provider.parse(provider_value.string) orelse return error.InvalidDurableField;
-        } else .gateway,
+            break :blk model_provider.parse(provider_value.string) orelse
+                if (std.ascii.eqlIgnoreCase(provider_value.string, "gateway")) .xai else return error.InvalidDurableField;
+        } else .xai,
         .requested_fast_mode = try requireBool(object, "requested_fast_mode"),
         .fast_mode = try requireBool(object, "fast_mode"),
         .max_provider_attempts = max_provider_attempts,
@@ -2288,7 +2290,7 @@ test "durable state round trips live history while discarding legacy authority" 
         25,
         .observed_generation,
         "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        "https://cli-chat-proxy.grok.com/v1",
         null,
     );
     var usage = try usage_runtime.snapshot(alloc);
@@ -3306,7 +3308,7 @@ test "recovery checkpoint round trips while legacy state stays absent" {
     var legacy_source = std.Io.Reader.fixed(legacy);
     var legacy_state = try decodeState(alloc, &legacy_source, .{});
     defer legacy_state.deinit(alloc);
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, legacy_state.preferences.provider);
+    try std.testing.expectEqual(model_provider.ProviderId.xai, legacy_state.preferences.provider);
     try std.testing.expectEqual(@as(?RecoveryCheckpoint, null), legacy_state.recovery_checkpoint);
 }
 
