@@ -1428,11 +1428,8 @@ test "terminal tool schema derives one closed branch per terminal action" {
             try std.testing.expectEqualStrings(field_name, property.name);
             if (std.mem.eql(u8, field_name, "action")) {
                 try std.testing.expect(!property.nullable);
-                try std.testing.expectEqualSlices(
-                    []const u8,
-                    &.{@tagName(action)},
-                    schemaEnumValues(property),
-                );
+                try std.testing.expectEqual(@as(usize, 1), schemaEnumValues(property).len);
+                try std.testing.expectEqualStrings(@tagName(action), schemaEnumValues(property)[0]);
                 continue;
             }
             try std.testing.expectEqual(

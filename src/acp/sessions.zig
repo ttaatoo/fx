@@ -1484,7 +1484,7 @@ fn initAcpSessionTestState(
         .writer = .{ .stdout = capture },
         .workspace_root = workspace,
         .api_key = api_key,
-        .credential_source = .ai_gateway_api_key,
+        .credential_source = .grok_subscription,
         .selected_model = selected_model,
         .configured_model = configured_model,
         .agent_step_limit = 8,

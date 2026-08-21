@@ -153,6 +153,8 @@ pub const Context = struct {
     tool_registry: tool_dispatch.Registry = .{},
     subagent_host: ?*subagent_tool_host.Runtime = null,
     subagent_caller_id: ?[]const u8 = null,
+    /// Test-only: exercise the Vision executor after product providers retired that tool.
+    allow_disabled_provider_tools: bool = false,
     permission_mode: PermissionMode,
     permission_grants: []const PermissionGrant,
     session_grants: []const PermissionGrant = &.{},
@@ -304,7 +306,7 @@ fn providerDisablesTool(_: model_provider.ProviderId, name: []const u8) bool {
 }
 
 pub fn validateToolCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_contracts.ToolCallValidationResult {
-    if (providerDisablesTool(ctx.provider, call.name)) {
+    if (!ctx.allow_disabled_provider_tools and providerDisablesTool(ctx.provider, call.name)) {
         return .{ .failure = try arena.dupe(u8, "Unsupported tool: vision") };
     }
     const spec = registeredToolSpec(ctx, call.name) orelse {
@@ -336,7 +338,7 @@ pub fn validateToolCall(ctx: Context, arena: Allocator, call: ToolCall) !tool_co
 }
 
 pub fn checkToolAvailability(ctx: Context, arena: Allocator, call: ToolCall) !?[]const u8 {
-    if (providerDisablesTool(ctx.provider, call.name)) {
+    if (!ctx.allow_disabled_provider_tools and providerDisablesTool(ctx.provider, call.name)) {
         return try arena.dupe(u8, "Unsupported tool: vision");
     }
     return tool_dispatch.localToolAvailabilityFailureForCall(
@@ -8481,7 +8483,9 @@ fn executeVisionForTest(
     args_json: []const u8,
     catalog: []const types.ImageAttachment,
 ) !ToolExecutionResult {
-    return executeToolCallAuthorized(rt.context(), .{
+    var ctx = rt.context();
+    ctx.allow_disabled_provider_tools = rt.provider != .codex;
+    return executeToolCallAuthorized(ctx, .{
         .call_allocator = alloc,
         .result_allocator = alloc,
         .call = .{ .id = "vision-call", .name = "vision", .arguments_json = args_json },
@@ -8535,7 +8539,9 @@ fn executeVisionPathTargetsForTest(
     args_json: []const u8,
     targets: []const command_admission.VisionPathExecutionTarget,
 ) !ToolExecutionResult {
-    return executeToolCallAuthorized(rt.context(), .{
+    var ctx = rt.context();
+    ctx.allow_disabled_provider_tools = rt.provider != .codex;
+    return executeToolCallAuthorized(ctx, .{
         .call_allocator = alloc,
         .result_allocator = alloc,
         .call = .{ .id = "vision-call", .name = "vision", .arguments_json = args_json },

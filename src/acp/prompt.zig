@@ -3389,7 +3389,7 @@ fn initTestAcpState(alloc: Allocator, workspace_root: []const u8, mode: Permissi
         .writer = jsonrpc.Writer.init(),
         .workspace_root = owned_workspace,
         .api_key = api_key,
-        .credential_source = .ai_gateway_api_key,
+        .credential_source = .grok_subscription,
         .sandbox_backend = selected_backend,
         .web_search_runtime = @import("../core/tooling/web_search_runtime.zig").Runtime.init(.{
             .provider = null,
@@ -3400,7 +3400,7 @@ fn initTestAcpState(alloc: Allocator, workspace_root: []const u8, mode: Permissi
             .mode = "normal",
             .workspace_root = owned_workspace,
             .api_key = api_key,
-            .credential_source = .ai_gateway_api_key,
+            .credential_source = .grok_subscription,
             .agent_step_limit = 4,
             .max_tool_result_bytes = 1024 * 1024,
             .fast_mode = false,
@@ -3858,27 +3858,8 @@ test "ACP deps reject malformed native web_search calls" {
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", result.failure);
 }
 
-test "ACP prompt projection configures web search then blocks native execution" {
+test "ACP prompt projection advertises native web_search without a local backend" {
     const alloc = std.testing.allocator;
-    const web_search_contract = @import("../core/tooling/web_search_contract.zig");
-    const web_search_runtime = @import("../core/tooling/web_search_runtime.zig");
-    const ProviderState = struct {
-        calls: usize = 0,
-    };
-    const FailingWebSearchProvider = struct {
-        fn execute(
-            raw_ctx: ?*anyopaque,
-            _: Allocator,
-            _: web_search_runtime.Inputs,
-            _: web_search_contract.ProviderRequest,
-            _: ?web_search_contract.ProgressFn,
-            _: ?*anyopaque,
-        ) anyerror!web_search_contract.ProviderResponse {
-            const state: *ProviderState = @ptrCast(@alignCast(raw_ctx orelse return error.TestWebSearchProvider));
-            state.calls += 1;
-            return error.TestWebSearchProvider;
-        }
-    };
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -3890,20 +3871,6 @@ test "ACP prompt projection configures web search then blocks native execution" 
     defer state.deinit();
     state.writer = .{ .stdout = capture };
     var ctx = AcpContext{ .alloc = arena, .state = &state, .session_id = "session_1" };
-    var provider_state = ProviderState{};
-    var provider = state.web_search_runtime.provider orelse return error.TestExpectedEqual;
-    provider.context = @ptrCast(&provider_state);
-    provider.execute_fn = FailingWebSearchProvider.execute;
-    state.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = provider,
-    });
-
-    state.web_search_runtime.configure(.{
-        .api_key = "stale-key",
-        .worker_model = "stale-model",
-        .gateway_retry_count = 99,
-        .gateway_chat_url = "https://stale.invalid/chat",
-    });
 
     var messages: std.ArrayList(ChatMessage) = .empty;
     defer messages.deinit(arena);
@@ -3912,21 +3879,15 @@ test "ACP prompt projection configures web search then blocks native execution" 
     try append_static(deps.ctx, arena, &messages);
     try deps.append_runtime_context(deps.ctx, arena, &messages);
 
-    try std.testing.expectEqualStrings("stale-key", state.web_search_runtime.api_key);
-
     const validate = deps.validate_tool_call orelse return error.TestExpectedEqual;
     const validation = try validate(deps.ctx, arena, .{
         .id = "search",
         .name = "web_search",
         .arguments_json = "{\"query\":\"x\"}",
     });
-    const session = state.active_session orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-    try std.testing.expectEqualStrings(session.api_key, state.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
 
+    const session = state.active_session orelse return error.TestExpectedEqual;
     const execute = deps.execute_tool_call;
     const execution = try execute(deps.ctx, .{
         .call_allocator = arena,
@@ -3941,12 +3902,9 @@ test "ACP prompt projection configures web search then blocks native execution" 
         .advertised_dynamic_tool_names = &.{},
         .max_tool_result_bytes = session.max_tool_result_bytes,
     });
-    try std.testing.expectEqualStrings(session.api_key, state.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqual(.failure, execution.status);
-    try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
+    try std.testing.expect(std.mem.find(u8, execution.model_output, "web_search is unavailable") != null);
+    try std.testing.expect(ctx.toolContext().web_search_backend == null);
 }
 
 test "ACP ChatGPT route removes Gateway-backed auxiliary capabilities" {
@@ -4403,14 +4361,10 @@ test "ACP prompt agent config carries request options from active session" {
     var ctx = AcpContext{ .alloc = alloc, .state = &state, .session_id = "session_1" };
     const tool_ctx = ctx.toolContext();
     try std.testing.expect(!tool_ctx.web_search_runtime_ready);
-    try std.testing.expect(tool_ctx.web_search_backend != null);
+    try std.testing.expect(tool_ctx.web_search_backend == null);
     try std.testing.expect(state.web_search_runtime.provider == null);
     try std.testing.expect(tool_ctx.web_fetch_runtime.? == &state.web_fetch_runtime);
     try std.testing.expectEqualStrings("team_123", tool_ctx.gateway_team.?);
-    try std.testing.expectEqualStrings("team_123", state.web_search_runtime.gateway_team.?);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqualStrings("/models", tool_ctx.gateway_models_path);
     try std.testing.expect(tool_ctx.devbox_provider.?.execute_fn == unavailableDevboxForTest);
 }

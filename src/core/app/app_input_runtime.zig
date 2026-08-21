@@ -4015,24 +4015,15 @@ test "app_input_runtime auth stage Escape pops before closing the picker" {
     const alloc = std.testing.allocator;
     var app = try RoutingFakeApp.init(alloc);
     defer app.deinit();
-    app.auth.source_inventory = auth_runtime.SourceSet.initOne(.stored_key);
+    app.auth.source_inventory = auth_runtime.SourceSet.initMany(&.{ .grok_subscription, .chatgpt_subscription });
     app.auth.openPicker(alloc);
-
-    for (0..4) |_| _ = app.auth.movePicker(1);
-    try std.testing.expect((auth_runtime.Choice{ .action = .switch_credential }).eql(
-        app.auth.pickerView().selected_choice.?,
-    ));
-
-    try Runtime(RoutingFakeApp).handleByte(&app, '\r', 4096, 100);
+    app.auth.openSwitchCredentialPicker(alloc);
     try std.testing.expectEqual(auth_runtime.PickerStage.switch_credential, app.auth.pickerView().stage);
     try std.testing.expect(app.auth.pickerView().active);
 
     try Runtime(RoutingFakeApp).resolveEscape(&app, false, 1);
     try std.testing.expectEqual(auth_runtime.PickerStage.root, app.auth.pickerView().stage);
     try std.testing.expect(app.auth.pickerView().active);
-    try std.testing.expect((auth_runtime.Choice{ .action = .switch_credential }).eql(
-        app.auth.pickerView().selected_choice.?,
-    ));
 
     try Runtime(RoutingFakeApp).resolveEscape(&app, false, 2);
     try std.testing.expect(!app.auth.pickerView().active);
@@ -4043,19 +4034,18 @@ test "app_input_runtime disabled change team action stays silent" {
     const alloc = std.testing.allocator;
     var app = try RoutingFakeApp.init(alloc);
     defer app.deinit();
-    app.auth.source_inventory = auth_runtime.SourceSet.initOne(.stored_key);
+    app.auth.source_inventory = auth_runtime.SourceSet.initMany(&.{ .grok_subscription, .chatgpt_subscription });
     app.auth.openPicker(alloc);
 
-    for (0..3) |_| _ = app.auth.movePicker(1);
-    try std.testing.expect((auth_runtime.Choice{ .action = .change_team }).eql(
-        app.auth.pickerView().selected_choice.?,
-    ));
+    var index: usize = 0;
+    while (app.auth.pickerView().choiceAt(index)) |choice| : (index += 1) {
+        try std.testing.expect(!choice.eql(.{ .action = .change_team }));
+    }
 
     try Runtime(RoutingFakeApp).handleByte(&app, '\r', 4096, 100);
 
-    try std.testing.expect(app.auth.pickerView().active);
-    try std.testing.expectEqual(auth_runtime.PickerStage.root, app.auth.pickerView().stage);
-    try std.testing.expect(app.selected_auth_action == null);
+    try std.testing.expect(!app.auth.pickerView().active);
+    try std.testing.expectEqual(auth_runtime.AcquisitionAction.grok_login, app.selected_auth_action.?);
     try std.testing.expectEqual(@as(usize, 0), app.transcript.items.len);
 }
 
@@ -7677,11 +7667,11 @@ fn openRoutingModelMenu(app: *RoutingFakeApp, model_ids: []const []const u8) !vo
 }
 
 fn openRoutingAuthPicker(app: *RoutingFakeApp) !void {
-    app.auth.source_inventory.insert(.vercel_oidc_token);
-    app.auth.source_inventory.insert(.ai_gateway_api_key);
+    app.auth.source_inventory.insert(.grok_subscription);
+    app.auth.source_inventory.insert(.chatgpt_subscription);
     app.auth.openPicker(app.alloc);
     try std.testing.expect(app.auth.movePicker(1));
-    try std.testing.expectEqual(@as(usize, 6), app.auth.pickerView().choiceCount());
+    try std.testing.expectEqual(@as(usize, 2), app.auth.pickerView().choiceCount());
     try std.testing.expectEqual(@as(usize, 1), app.auth.pickerView().selectedIndex());
 }
 

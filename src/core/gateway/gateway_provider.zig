@@ -349,7 +349,7 @@ test "capability resolver uses provider catalog metadata" {
     try std.testing.expect(!missing.supports_vision);
 }
 
-test "capability resolver retries rejected authenticated catalog access anonymously" {
+test "capability resolver does not retry rejected SuperGrok or Anthropic catalog access anonymously" {
     var resolver: CapabilityResolver = .{};
     defer resolver.deinit(std.testing.allocator);
     var fake = FakeCatalog{ .outcome = .authenticated_rejected_then_ready };
@@ -364,10 +364,13 @@ test "capability resolver retries rejected authenticated catalog access anonymou
         "provider/model",
     );
 
-    try std.testing.expectEqual(@as(usize, 2), fake.calls);
-    try std.testing.expect(fake.saw_authenticated_access);
-    try std.testing.expect(fake.saw_public_retry);
-    try std.testing.expect(capabilities.supports_vision);
+    try std.testing.expectEqual(@as(usize, 1), fake.calls);
+    try std.testing.expect(!fake.saw_public_retry);
+    try std.testing.expectEqual(CapabilityResolverState.failed, resolver.state);
+    try std.testing.expectEqual(
+        model_capabilities.capabilitiesForModel("provider/model").supports_vision,
+        capabilities.supports_vision,
+    );
 }
 
 test "capability resolver degrades terminal catalog failures to local capabilities" {

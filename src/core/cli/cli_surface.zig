@@ -3534,6 +3534,16 @@ test "parse acp args extracts known flags and rejects invalid arguments" {
     );
 }
 
+fn optionalReviewerMatches(
+    actual: ?permission_auto_classifier.Provider,
+    expected: ?permission_auto_classifier.Provider,
+) bool {
+    if (actual == null and expected == null) return true;
+    const actual_provider = actual orelse return false;
+    const expected_provider = expected orelse return false;
+    return actual_provider.review_fn == expected_provider.review_fn;
+}
+
 test "ACP command routes parsed options and launch config through the injected runner" {
     const Capture = struct {
         expected: Config,
@@ -3567,7 +3577,7 @@ test "ACP command routes parsed options and launch config through the injected r
                 ) and
                 std.mem.eql(u8, cfg.mode_registry.default_mode_id, expected.mode_registry.default_mode_id) and
                 cfg.devbox_provider.?.execute_fn == expected.devbox_provider.?.execute_fn and
-                cfg.permission_reviewer_provider.?.review_fn == expected.permission_reviewer_provider.?.review_fn;
+                optionalReviewerMatches(cfg.permission_reviewer_provider, expected.permission_reviewer_provider);
 
             const limit_matches = cfg.context_limit_overrides.len == 1 and
                 cfg.context_limit_overrides[0].name == .project_instructions_total_bytes and
