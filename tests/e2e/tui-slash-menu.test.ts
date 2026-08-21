@@ -892,7 +892,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       ).toBe(71);
       expect(closedComposerRow).toBe(73);
       await session.sendLiteralText("/");
-      await session.waitForText("Commands 40", 5_000);
+      await session.waitForText("Commands 38", 5_000);
       const afterSlash = await capture("after-slash");
       expect(visibleTranscriptTailRow(afterSlash)).toBe(62);
       expect(composerRow(afterSlash)).toBe(64);
@@ -1353,7 +1353,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
         (current) =>
           current.includes("resume-helper") &&
           !current.includes("Enter Use") &&
-          !current.includes("Fx needs access to Vercel AI Gateway"),
+          !current.includes("SuperGrok needs a subscription login"),
         5_000,
       );
       expect(composerContains(pane, "resume-helper")).toBe(true);
@@ -1415,7 +1415,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendKeys("Down");
       await session.sendKeys("Enter");
       pane = await session.waitForPane(
-        (current) => hasEmptyComposer(current) && !current.includes("Commands 40"),
+        (current) => hasEmptyComposer(current) && !current.includes("Commands 38"),
         5_000,
       );
       expect(composerContains(pane, "/clear")).toBe(false);
@@ -1639,7 +1639,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.waitForComposer(10_000);
 
       await session.sendText("/help");
-      let pane = await session.waitForText("Commands 40", 5_000);
+      let pane = await session.waitForText("Commands 38", 5_000);
       expect(pane).toContain("/help");
       expect(pane).not.toContain("● /help");
       await session.sendKeys("Escape");
@@ -3387,7 +3387,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.waitForComposer(10_000);
 
       await session.sendLiteralText("/");
-      await session.waitForText("Commands 40", 5_000);
+      await session.waitForText("Commands 38", 5_000);
 
       for (let i = 0; i < 5; i += 1) {
         await session.sendKeys("Down");

@@ -115,7 +115,10 @@ describe("cli: help", () => {
       );
       expect(r.stdout).toContain("Commands:\n");
       expect(r.stdout).toContain("Run one noninteractive request");
-      expect(r.stdout).toContain("credits|balance");
+      expect(r.stdout).toContain("login [grok|codex]");
+      expect(r.stdout).not.toContain("credits|balance");
+      expect(r.stdout).not.toContain("Vercel");
+      expect(r.stdout).not.toContain("Gateway");
       expect(r.stdout).toContain("Flags:\n");
       expect(r.stdout).toContain("--context-limit <spec>");
       expect(r.stdout).toContain("Set name=bytes|off; repeatable");
@@ -276,7 +279,7 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
         expect(r.stderr).toBe("");
         expect(r.stdout).toContain("Commands:");
         expect(r.stdout).toContain("ask");
-        expect(r.stdout).toContain("setup");
+        expect(r.stdout).toContain("login");
         expect(r.stdout).toContain("status");
         expect(r.stdout).toContain("doctor");
         expect(maxLineWidth(r.stdout)).toBeLessThanOrEqual(60);
@@ -600,7 +603,8 @@ describe("cli: status", () => {
 
         const credits = await runFx(["credits"], { cwd, env });
         expect(credits.code).not.toBe(0);
-        expect(credits.stderr).toContain("credits are not available");
+        expect(credits.stderr).toContain("unknown subcommand: credits");
+        expect(credits.stderr).not.toContain("Vercel");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -1349,14 +1353,16 @@ describe("cli: logout", () => {
 
 describe("cli: setup", () => {
   test(
-    "fx setup is a top-level command and fails cleanly when Keychain is disabled",
+    "fx setup is not a product command",
     async () => {
       const r = await runFx(["setup"], {
         env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
       });
-      expect(r.code).toBe(1);
+      expect(r.code).not.toBe(0);
       expect(r.stdout).toBe("");
-      expect(r.stderr).toContain("AI Gateway API keys are not supported");
+      expect(r.stderr).toContain("unknown subcommand: setup");
+      expect(r.stderr).not.toContain("AI Gateway");
+      expect(r.stderr).not.toContain("Vercel");
     },
     TIMEOUT,
   );

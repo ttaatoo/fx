@@ -130,7 +130,9 @@ pub fn Runtime(comptime App: type) type {
                 return;
             }
             if (comptime host_target.is_wasm) {
-                try beginSignIn(app, false);
+                try app.auth.refreshSourceInventory(app.alloc);
+                app.auth.openPicker(app.alloc);
+                app.shell.render_requests.request(.footer);
                 return;
             }
             try app.auth.refreshSourceInventory(app.alloc);
@@ -342,22 +344,23 @@ pub fn Runtime(comptime App: type) type {
                 .provider => |provider| try switchProvider(app, provider, true),
                 .source => |source| try applySourceChoice(app, source),
                 .action => |action| switch (action) {
-                    .login => try beginSignIn(app, true),
+                    .login => try writeAuthNotice(app, .{
+                        .topic = "auth",
+                        .tone = .warning,
+                        .body = "Use SuperGrok or Codex. Run /login and choose Sign in with SuperGrok or Sign in with Codex.",
+                    }),
                     .chatgpt_login => try beginChatGptSignIn(app),
                     .grok_login => try beginGrokSignIn(app),
-                    .setup => {
-                        if (comptime !runtime_profile.allows(App, .native_auth)) {
-                            try app.writeDomainNotice(.{
-                                .topic = "auth",
-                                .tone = .warning,
-                                .body = "API key setup is unavailable in this WASM session.",
-                            }, true);
-                            return;
-                        }
-                        prepareApiKeyInputBoundary(app);
-                        app.auth.openApiKeyPickerFromRoot(app.alloc);
-                    },
-                    .change_team => try beginTeamPicker(app),
+                    .setup => try writeAuthNotice(app, .{
+                        .topic = "auth",
+                        .tone = .warning,
+                        .body = "Use SuperGrok or Anthropic. Run /login and choose Sign in with SuperGrok, or set ANTHROPIC_API_KEY.",
+                    }),
+                    .change_team => try writeAuthNotice(app, .{
+                        .topic = "auth",
+                        .tone = .warning,
+                        .body = "Team switching is not supported. Run /login and choose SuperGrok or Codex.",
+                    }),
                     .switch_credential => app.auth.openSwitchCredentialPicker(app.alloc),
                     .automatic => try applyAutomaticCredential(app),
                 },
@@ -428,27 +431,12 @@ pub fn Runtime(comptime App: type) type {
                     var owned = completed;
                     defer owned.deinit(app.alloc);
                     switch (owned) {
-                        .vercel => |*selection| {
-                            if (!try selectCredentialSource(app, .fx_login)) {
-                                _ = app.auth.popPickerStage(app.alloc);
-                                try writeAuthNotice(app, .{
-                                    .topic = "auth",
-                                    .tone = .@"error",
-                                    .body = "Signed in, but the fx login credential could not be loaded.",
-                                });
-                                return;
-                            }
-                            rememberCredentialSource(app, .fx_login);
-
-                            if (selection.teams.items.len > 0) {
-                                app.auth.openTeamPicker(app.alloc, selection);
-                            } else {
-                                app.auth.closePicker(app.alloc);
-                            }
+                        .vercel => {
+                            app.auth.closePicker(app.alloc);
                             try writeAuthNotice(app, .{
                                 .topic = "auth",
-                                .tone = .neutral,
-                                .body = "Signed in to Vercel.",
+                                .tone = .warning,
+                                .body = "That sign-in path is not supported. Run /login and choose SuperGrok or Codex.",
                             });
                         },
                         .chatgpt => {
@@ -569,12 +557,12 @@ pub fn Runtime(comptime App: type) type {
                 .gateway_refused => try app.writeDomainNotice(.{
                     .topic = "auth",
                     .tone = .@"error",
-                    .body = "The AI Gateway refused that API key. Nothing was stored.",
+                    .body = "That API key could not be verified. Nothing was stored.",
                 }, true),
                 .gateway_unavailable => try app.writeDomainNotice(.{
                     .topic = "auth",
                     .tone = .@"error",
-                    .body = "Could not verify that API key with AI Gateway. Nothing was stored.",
+                    .body = "Could not verify that API key. Nothing was stored.",
                 }, true),
                 .store_failed => {
                     const body = try std.fmt.allocPrint(
@@ -965,91 +953,25 @@ pub fn Runtime(comptime App: type) type {
         }
 
         fn beginTeamPicker(app: *App) !void {
-            if (!app.auth.pickerView().fx_login_session_available) return;
-            try app.flushBeforeBlockingExternalWork();
-
-            var selection = login_flow.loadTeamSelection(app.alloc, app.auth.oauthTransport()) catch |err| {
-                debug_trace.logf("auth", "team picker load failed err={s}", .{@errorName(err)});
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .@"error",
-                    .body = switch (err) {
-                        error.NoSession => "The fx login session is no longer available. Sign in to change teams.",
-                        error.NoTeams => "No Vercel teams are available for this account.",
-                        else => "Could not load Vercel teams. The current team is unchanged.",
-                    },
-                }, true);
-                return;
-            };
-            defer selection.deinit(app.alloc);
-            app.auth.openTeamPicker(app.alloc, &selection);
-            app.shell.render_requests.request(.footer);
+            try writeAuthNotice(app, .{
+                .topic = "auth",
+                .tone = .warning,
+                .body = "Team switching is not supported. Run /login and choose SuperGrok or Codex.",
+            });
         }
 
         fn applyTeamChoice(app: *App, index: usize) !void {
-            const selection = app.auth.teamSelection() orelse return;
-            if (index >= selection.teams.items.len) return;
-            const team = selection.teams.items[index];
-            const body = try std.fmt.allocPrint(
-                app.alloc,
-                "Changed Vercel team to {s} ({s}).",
-                .{ team.name, team.slug },
-            );
-            defer app.alloc.free(body);
-
-            var selected_team = selection.select(app.alloc, index) catch |err| {
-                debug_trace.logf("auth", "team change failed err={s}", .{@errorName(err)});
-                app.auth.closePicker(app.alloc);
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .@"error",
-                    .body = switch (err) {
-                        error.SessionChanged, error.NoSession => "The fx login session changed before the team could be saved.",
-                        else => "Could not change the Vercel team. The current team is unchanged.",
-                    },
-                }, true);
-                return;
-            };
-            defer selected_team.deinit(app.alloc);
-
-            if (app.auth.credentialSource() == .fx_login) {
-                applyCredentialChange(app, app.auth.adoptSelectedTeam(app.alloc, &selected_team));
-            } else if (!try selectCredentialSource(app, .fx_login)) {
-                app.auth.closePicker(app.alloc);
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .@"error",
-                    .body = "Changed the Vercel team, but the fx login credential could not be loaded.",
-                }, true);
-                return;
-            }
-            rememberCredentialSource(app, .fx_login);
-            app.auth.closePicker(app.alloc);
-            try app.writeDomainNotice(.{
-                .topic = "auth",
-                .tone = .neutral,
-                .body = body,
-            }, true);
+            _ = index;
+            try beginTeamPicker(app);
         }
 
         fn beginSignIn(app: *App, from_root: bool) !void {
-            try app.flushBeforeBlockingExternalWork();
-
-            const started = if (from_root)
-                app.auth.openSignInPickerFromRoot(app.alloc)
-            else
-                app.auth.openSignInPicker(app.alloc);
-            if (started catch |err| {
-                debug_trace.logf("auth", "login failed err={s}", .{@errorName(err)});
-                try writeLoginError(app, .fx_login, err);
-                return;
-            }) {
-                app.shell.render_requests.request(.footer);
-                // Open the browser as soon as the device code is ready instead of
-                // waiting for Enter; Enter stays as a manual re-open, and
-                // FX_NO_OPEN_BROWSER opts out for headless/SSH sessions.
-                if (io_mod.getenv("FX_NO_OPEN_BROWSER") == null) try openSignInBrowser(app);
-            }
+            _ = from_root;
+            try writeAuthNotice(app, .{
+                .topic = "auth",
+                .tone = .warning,
+                .body = "Use SuperGrok or Codex. Run /login and choose Sign in with SuperGrok or Sign in with Codex.",
+            });
         }
 
         fn openSignInBrowser(app: *App) !void {
@@ -1184,9 +1106,9 @@ pub fn Runtime(comptime App: type) type {
                 }
             else switch (err) {
                 error.ClientIdMissing => .{ .topic = "auth", .tone = .@"error", .body = "fx login is not configured yet. The current credential is unchanged." },
-                error.AccessDenied => .{ .topic = "auth", .tone = .@"error", .body = "Vercel sign-in was denied. The current credential is unchanged." },
-                error.ExpiredToken, error.LoginTimedOut => .{ .topic = "auth", .tone = .warning, .body = "The Vercel sign-in code expired. The current credential is unchanged; run /login to try again." },
-                else => .{ .topic = "auth", .tone = .@"error", .body = "Vercel sign-in failed. The current credential is unchanged." },
+                error.AccessDenied => .{ .topic = "auth", .tone = .@"error", .body = "Sign-in was denied. The current credential is unchanged." },
+                error.ExpiredToken, error.LoginTimedOut => .{ .topic = "auth", .tone = .warning, .body = "Sign-in expired. The current credential is unchanged; run /login to try again." },
+                else => .{ .topic = "auth", .tone = .@"error", .body = "Sign-in failed. The current credential is unchanged." },
             };
             try writeAuthNotice(app, notice);
         }
@@ -1593,39 +1515,31 @@ test "completed credential switch emits exactly one transcript line" {
     try std.testing.expectEqualStrings(expected, app.transcript.items);
 }
 
-test "team change from an environment source activates and remembers fx login" {
+test "team change stays a local notice and does not activate fx login" {
     var app: TestApp = .{};
     defer app.deinit();
     app.auth.select_result = true;
 
     try Runtime(TestApp).applyTeamChoice(&app, 0);
 
-    try std.testing.expectEqual(@as(usize, 1), app.auth.team_selection.select_count);
+    try std.testing.expectEqual(@as(usize, 0), app.auth.team_selection.select_count);
     try std.testing.expect(!app.auth.selected_team_adopted);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.auth.active_source.?);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.auth.selected_source.?);
-    try std.testing.expectEqual(@as(usize, 1), app.preference_write_count);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.last_preference_source.?);
-    try std.testing.expect(app.auth.picker_closed);
-    try std.testing.expectEqual(@as(usize, 1), app.model_cache.reset_count);
-    try std.testing.expectEqual(@as(usize, 1), app.model_cache_warmup_count);
+    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
     try std.testing.expectEqual(@as(usize, 1), app.notice_write_count);
-    try std.testing.expectEqualStrings(
-        "Changed Vercel team to Vercel Labs (vercel-labs).\n",
-        app.transcript.items,
-    );
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "Team switching is not supported") != null);
 }
 
-test "team change on an active fx login updates and remembers the selected team" {
+test "team change on an active fx login does not persist a team" {
     var app: TestApp = .{};
     defer app.deinit();
     app.auth.active_source = .fx_login;
 
     try Runtime(TestApp).applyTeamChoice(&app, 0);
 
-    try std.testing.expect(app.auth.selected_team_adopted);
-    try std.testing.expectEqual(@as(usize, 1), app.preference_write_count);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.last_preference_source.?);
+    try std.testing.expect(!app.auth.selected_team_adopted);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "Team switching is not supported") != null);
 }
 
 test "successful direct login remembers fx login after activation" {
@@ -1636,10 +1550,11 @@ test "successful direct login remembers fx login after activation" {
 
     try Runtime(TestApp).collectSignInFacts(&app);
 
-    try std.testing.expectEqual(credentials.Source.fx_login, app.auth.active_source.?);
-    try std.testing.expectEqual(@as(usize, 1), app.preference_write_count);
-    try std.testing.expectEqual(credentials.Source.fx_login, app.last_preference_source.?);
+    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
+    try std.testing.expect(app.auth.picker_closed);
     try std.testing.expectEqual(@as(usize, 1), app.notice_write_count);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "That sign-in path is not supported") != null);
 }
 
 test "direct login source load failure leaves the environment preference unchanged" {
@@ -1652,8 +1567,8 @@ test "direct login source load failure leaves the environment preference unchang
 
     try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
     try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
-    try std.testing.expectEqual(@as(usize, 1), app.auth.picker_pop_count);
-    try std.testing.expect(std.mem.find(u8, app.transcript.items, "could not be loaded") != null);
+    try std.testing.expect(app.auth.picker_closed);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "That sign-in path is not supported") != null);
 }
 
 test "failed preference persistence keeps a successful direct login active" {
@@ -1665,9 +1580,10 @@ test "failed preference persistence keeps a successful direct login active" {
 
     try Runtime(TestApp).collectSignInFacts(&app);
 
-    try std.testing.expectEqual(credentials.Source.fx_login, app.auth.active_source.?);
-    try std.testing.expectEqual(@as(usize, 1), app.preference_write_count);
-    try std.testing.expectEqual(@as(?credentials.Source, null), app.last_preference_source);
+    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
+    try std.testing.expect(app.auth.picker_closed);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "That sign-in path is not supported") != null);
 }
 
 test "successful API key save persists even when the live credential is unchanged" {
@@ -1717,8 +1633,7 @@ test "team source load failure preserves the environment source and preference" 
 
     try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, app.auth.active_source.?);
     try std.testing.expectEqual(@as(usize, 0), app.preference_write_count);
-    try std.testing.expect(app.auth.picker_closed);
-    try std.testing.expect(std.mem.find(u8, app.transcript.items, "could not be loaded") != null);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "Team switching is not supported") != null);
 }
 
 test "prompt credential refresh reloads the catalog after the credential changes" {

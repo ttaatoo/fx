@@ -323,7 +323,6 @@ pub fn Handlers(comptime App: type) type {
                 .show_help = commandShowHelp,
                 .login = commandLogin,
                 .logout = commandLogout,
-                .setup = commandSetup,
                 .show_status = commandShowStatus,
                 .show_background = commandShowBackground,
                 .stop_background = commandStopBackground,
@@ -347,7 +346,6 @@ pub fn Handlers(comptime App: type) type {
                 .compact_history = commandCompactHistory,
                 .handle_settings = commandHandleSettings,
                 .handle_alias = commandHandleAlias,
-                .show_credits = commandShowCredits,
                 .paste_clipboard = commandPasteClipboard,
                 .toggle_fast = commandToggleFast,
                 .handle_appearance = commandHandleAppearance,
@@ -590,19 +588,6 @@ pub fn Handlers(comptime App: type) type {
                     .topic = "provider",
                     .tone = .@"error",
                     .body = "provider switching is not available in this runtime",
-                }, true);
-            }
-        }
-
-        fn commandSetup(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime @hasDecl(App, "openSetupHub")) {
-                try app.openSetupHub();
-            } else {
-                try app.writeDomainNotice(.{
-                    .topic = "setup",
-                    .tone = .@"error",
-                    .body = "setup is not available in this runtime",
                 }, true);
             }
         }
@@ -1609,15 +1594,6 @@ pub fn Handlers(comptime App: type) type {
                 .topic = "aliases",
                 .tone = .neutral,
                 .body = "Aliases are not yet configurable.",
-            }, true);
-        }
-
-        fn commandShowCredits(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try app.writeDomainNotice(.{
-                .topic = "credits",
-                .tone = .warning,
-                .body = "Credits are not available. This fork uses SuperGrok or Anthropic instead of Vercel AI Gateway.",
             }, true);
         }
 
@@ -3560,27 +3536,6 @@ fn writeSandboxPersistenceFailure(app: anytype, err: anyerror) !void {
 
 const SurfaceOnlyApp = struct {};
 
-const CreditsCommandFakeApp = struct {
-    alloc: std.mem.Allocator,
-    notice_body: std.ArrayList(u8) = .empty,
-    notice_topic: ?[]const u8 = null,
-    notice_tone: ?types.NoticeTone = null,
-
-    fn deinit(self: *CreditsCommandFakeApp) void {
-        self.notice_body.deinit(self.alloc);
-    }
-
-    noinline fn writeDomainNotice(
-        self: *CreditsCommandFakeApp,
-        notice: types.SemanticNotice,
-        _: bool,
-    ) !void {
-        self.notice_topic = notice.topic;
-        self.notice_tone = notice.tone;
-        try self.notice_body.appendSlice(self.alloc, notice.body);
-    }
-};
-
 const McpCommandFakeApp = struct {
     const ReloadBehavior = enum {
         published_empty,
@@ -4293,17 +4248,6 @@ test "app_commands exposes active handler API surface" {
     try std.testing.expectEqual(@as(usize, 1), handlers_info.params.len);
     try std.testing.expect(handlers_info.params[0].type.? == *SurfaceOnlyApp);
     try std.testing.expect(handlers_info.return_type.? == command_router.CommandHandlers);
-}
-
-test "credits command renders through the composed provider" {
-    var app = CreditsCommandFakeApp{ .alloc = std.testing.allocator };
-    defer app.deinit();
-
-    try Handlers(CreditsCommandFakeApp).commandShowCredits(@ptrCast(&app));
-
-    try std.testing.expectEqualStrings("credits", app.notice_topic.?);
-    try std.testing.expectEqual(types.NoticeTone.warning, app.notice_tone.?);
-    try std.testing.expect(std.mem.find(u8, app.notice_body.items, "Credits are not available") != null);
 }
 
 test "app_commands routes clear through carry-forward session reset" {

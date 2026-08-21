@@ -563,6 +563,7 @@ pub fn refreshFxSession(
     session: *oauth_session.Session,
 ) !void {
     const issuer_url = session.issuer;
+    if (!oauth_session.isLoopbackE2EIssuer(issuer_url)) return error.RetiredGatewayLogin;
     var metadata = try oauth.discover(alloc, transport, issuer_url);
     defer metadata.deinit(alloc);
     try oauth_session.validateE2EEndpoint(issuer_url, metadata.token_endpoint);

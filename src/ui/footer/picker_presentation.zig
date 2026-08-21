@@ -13,7 +13,7 @@ const input_presentation = @import("input_presentation.zig");
 const row_text = @import("row_text.zig");
 
 const Allocator = std.mem.Allocator;
-const team_query_prefix = "   Choose a Vercel team · Search: ";
+const team_query_prefix = "   Choose a team · Search: ";
 const compact_team_query_prefix = "Search: ";
 
 const TeamQueryProjection = struct {
@@ -119,9 +119,9 @@ pub noinline fn composeAuthPickerRow(
             .sign_in => unreachable,
             .api_key => unreachable,
             .change_team => if (view.team_query.len == 0)
-                "     No Vercel teams available"
+                "     No teams available"
             else
-                "     No matching Vercel teams",
+                "     No matching teams",
             .switch_credential => "     No credentials available",
         }, width);
         try row.appendSlice(alloc, ui_render.reset_style);
@@ -1001,7 +1001,7 @@ const picker_test_slash_specs = [_]command_specs.SlashSpec{
     .{ .kind = .models, .command = "/models", .help_entry = "/models", .completion_description = "browse available models", .presentation_category = .model },
     .{ .kind = .mcp, .command = "/mcp", .help_entry = "/mcp [list|resource|prompt|add|remove]", .completion_description = "manage MCP servers, resources, and prompts", .presentation_category = .extensions, .has_args = true },
     .{ .kind = .sandbox, .command = "/sandbox", .help_entry = "/sandbox [os|none]", .completion_description = "choose command sandbox behavior", .presentation_category = .security, .has_args = true },
-    .{ .kind = .credits, .command = "/credits", .aliases = &.{"/balance"}, .help_entry = "/credits (/balance)", .completion_description = "show gateway credits balance", .presentation_category = .account },
+    .{ .kind = .status, .command = "/status", .help_entry = "/status", .completion_description = "show runtime configuration", .presentation_category = .general },
 };
 const picker_test_slash_registry = command_specs.SlashRegistry{ .commands = picker_test_slash_specs[0..] };
 
@@ -1266,11 +1266,11 @@ test "registry-aware mixed slash completion maps skills after injected commands"
 test "registry-aware slash presentation preserves aliases" {
     try std.testing.expectEqual(
         @as(usize, 1),
-        mixedSlashCompletionCount(picker_test_slash_registry, "/bal", &.{}),
+        mixedSlashCompletionCount(picker_test_slash_registry, "/hel", &.{}),
     );
-    try std.testing.expectEqualStrings(
-        "/balance",
-        nthMixedSlashCompletionText(picker_test_slash_registry, "/bal", &.{}, 0).?,
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        mixedSlashCompletionCount(picker_test_slash_registry, "/bal", &.{}),
     );
 }
 
@@ -1701,11 +1701,11 @@ test "auth picker renders the staged switch and disabled team screens" {
     };
     var team_header = try composeAuthPickerRow(alloc, team_view, 0, 2, 80);
     defer team_header.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, team_header.items, "Choose a Vercel team") != null);
+    try std.testing.expect(std.mem.find(u8, team_header.items, "Choose a team") != null);
 
     var no_teams = try composeAuthPickerRow(alloc, team_view, 1, 2, 80);
     defer no_teams.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, no_teams.items, "No Vercel teams available") != null);
+    try std.testing.expect(std.mem.find(u8, no_teams.items, "No teams available") != null);
 
     var search_view = team_view;
     search_view.team_query = "play";
@@ -1724,7 +1724,7 @@ test "auth picker renders the staged switch and disabled team screens" {
 
     var no_matches = try composeAuthPickerRow(alloc, search_view, 1, 2, 80);
     defer no_matches.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, no_matches.items, "No matching Vercel teams") != null);
+    try std.testing.expect(std.mem.find(u8, no_matches.items, "No matching teams") != null);
 }
 
 test "api key stage renders only a bounded mask and the configured backend label" {

@@ -452,7 +452,7 @@ pub const PickerView = struct {
             .provider => |provider| model_provider.label(provider),
             .source => |source| credentials.sourceLabel(source),
             .action => |action| switch (action) {
-                .login => "Retired Gateway sign-in",
+                .login => "Unavailable sign-in",
                 .chatgpt_login => "Sign in with Codex",
                 .grok_login => "Sign in with SuperGrok",
                 .setup => if (self.include_skip) "Add an API key" else "API key",
@@ -1072,7 +1072,7 @@ pub const Runtime = struct {
     ) !bool {
         self.exitSignInStage(alloc);
         const started = switch (source) {
-            .fx_login => try self.sign_in_flow.start(alloc, self.oauth_transport),
+            .fx_login => return false,
             .chatgpt_subscription => try chatgpt_oauth.startSignIn(&self.sign_in_flow, alloc, self.oauth_transport),
             .grok_subscription => try grok_oauth.startSignIn(&self.sign_in_flow, alloc, self.oauth_transport),
             else => return error.InvalidSignInSource,

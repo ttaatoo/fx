@@ -43,7 +43,7 @@ Bare `fx login` starts SuperGrok. This uses subscriber quota, not an `XAI_API_KE
 
 Or use Anthropic Messages with `ANTHROPIC_API_KEY` and `~/.fx/providers.json`. Optional `ANTHROPIC_BASE_URL` can point at the official API or a Claude Code proxy. See [Providers](docs/direct-providers.md).
 
-Codex (`fx login codex`) is optional and talks to OpenAI directly. This fork does not use Vercel AI Gateway, `fx login vercel`, `fx setup`, Gateway credits, or `AI_GATEWAY_API_KEY`.
+Codex (`fx login codex`) is optional and talks to OpenAI directly. This fork has no Vercel AI Gateway path: `fx login vercel`, `fx setup`, `fx teams`, and Gateway credits are not product commands.
 
 Inside fx, `/provider` switches between SuperGrok, Anthropic, and Codex. `/model` lists the active provider's models.
 

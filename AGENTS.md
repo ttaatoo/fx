@@ -371,11 +371,11 @@ Releases use a two-workflow pipeline. The maintainer controls the changelog voic
 
 1. Go to **Actions > Prepare Release** on GitHub
 2. Select the bump type (`patch`, `minor`, or `major`) and run the workflow
-3. The workflow bumps the version, feeds the actual `git diff` to an LLM to draft the changelog, and opens a PR
-4. Review the PR — edit the AI-drafted changelog if needed — then merge
+3. The workflow bumps the version, drafts a local changelog placeholder from the source diff, and opens a PR
+4. Review the PR — replace the placeholder changelog with public product notes — then merge
 5. The existing `release.yml` detects the version change and handles build, publish, tagging, and the GitHub Release
 
-The `prepare-release.yml` workflow uses the Vercel AI Gateway (`AI_GATEWAY_API_KEY` secret) to generate the changelog from the real code diff, not from commit messages or PR descriptions.
+The `prepare-release.yml` workflow drafts the changelog locally. It does not call `ai-gateway.vercel.sh` or use `AI_GATEWAY_API_KEY`.
 
 ### Manual flow
 

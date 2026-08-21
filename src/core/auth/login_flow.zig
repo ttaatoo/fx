@@ -18,7 +18,6 @@ else
     struct {};
 
 const Allocator = std.mem.Allocator;
-const teams_endpoint = "https://api.vercel.com/v2/teams";
 const poll_wait_slice_ms: u64 = 100;
 pub const poll_request_timeout_ms: i64 = 15_000;
 const max_poll_interval_ms = std.math.maxInt(u64) / std.time.ns_per_ms;
@@ -212,10 +211,10 @@ pub const SignInRuntime = struct {
         alloc: Allocator,
         transport: oauth_transport.Provider,
     ) !bool {
-        const prepared = try prepareLogin(alloc, transport);
-        return self.startPrepared(alloc, prepared, .{
-            .oauth_transport = transport,
-        });
+        _ = self;
+        _ = alloc;
+        _ = transport;
+        return error.RetiredGatewayLogin;
     }
 
     pub fn startPrepared(
@@ -517,7 +516,7 @@ fn completeSignIn(
     client_id: []const u8,
     token: *oauth.TokenSet,
 ) !SignInCompletion {
-    var teams = fetchTeams(alloc, token.access_token, issuer_url) catch std.ArrayList(Team).empty;
+    var teams = std.ArrayList(Team).empty;
     errdefer freeTeams(alloc, &teams);
     const now_ms = io_mod.milliTimestamp();
     const session = try take_login_session(alloc, issuer_url, client_id, token, null, now_ms);
@@ -543,7 +542,7 @@ pub fn runLogin(
     _ = alloc;
     _ = transport;
     _ = url_opener;
-    try writeStdout("Vercel AI Gateway is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+    try writeStdout("Use fx login grok or fx login codex.\n");
     return error.RetiredGatewayLogin;
 }
 
@@ -595,39 +594,19 @@ pub fn runTeams(
     alloc: Allocator,
     transport: oauth_transport.Provider,
 ) !void {
-    var selection = try loadTeamSelection(alloc, transport);
-    defer selection.deinit(alloc);
-
-    const selected_index = (try selectTeam(alloc, selection.teams.items, selection.currentTeam())) orelse
-        return LoginError.NoTeams;
-    const selected = selection.teams.items[selected_index];
-    var changed_team = try selection.select(alloc, selected_index);
-    defer changed_team.deinit(alloc);
-    try writeStdoutFmt("Selected team: {s} ({s}).\n", .{ selected.name, selected.slug });
+    _ = alloc;
+    _ = transport;
+    try writeStdout("Team switching is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+    return error.NoTeams;
 }
 
 pub fn loadTeamSelection(
     alloc: Allocator,
     transport: oauth_transport.Provider,
 ) !TeamSelection {
-    var session = blk: {
-        var mutation = (try oauth_session.beginExistingMutation()) orelse return LoginError.NoSession;
-        defer mutation.deinit();
-
-        var loaded = (try mutation.load(alloc)) orelse return LoginError.NoSession;
-        errdefer loaded.deinit(alloc);
-        if (loaded.expired(io_mod.milliTimestamp())) {
-            try credentials.refreshFxSession(alloc, transport, &mutation, &loaded);
-        }
-        break :blk loaded;
-    };
-    errdefer session.deinit(alloc);
-
-    const teams = try fetchTeams(alloc, session.access_token, session.issuer);
-    return .{
-        .session = session,
-        .teams = teams,
-    };
+    _ = alloc;
+    _ = transport;
+    return error.NoTeams;
 }
 
 fn sameCredentialState(left: oauth_session.Session, right: oauth_session.Session) bool {
@@ -681,6 +660,7 @@ fn revokeLogoutSession(
     transport: oauth_transport.Provider,
     session: oauth_session.Session,
 ) !void {
+    if (!oauth_session.isLoopbackE2EIssuer(session.issuer)) return;
     var metadata = try oauth.discover(alloc, transport, session.issuer);
     defer metadata.deinit(alloc);
     const endpoint = metadata.revocation_endpoint orelse return error.RevocationEndpointMissing;
@@ -971,16 +951,13 @@ fn discardStdinLine() void {
 }
 
 fn fetchTeams(alloc: Allocator, access_token: []const u8, issuer_url: []const u8) !std.ArrayList(Team) {
+    if (!oauth_session.isLoopbackE2EIssuer(issuer_url)) return error.NoTeams;
     if (comptime host_target.is_wasm) return fetchTeamsFromJsHost(alloc, access_token, issuer_url);
     var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
     defer client.deinit();
 
-    const e2e_endpoint = if (oauth_session.isLoopbackE2EIssuer(issuer_url))
-        try std.fmt.allocPrint(alloc, "{s}/v2/teams", .{issuer_url})
-    else
-        null;
-    defer if (e2e_endpoint) |endpoint| alloc.free(endpoint);
-    const endpoint = e2e_endpoint orelse teams_endpoint;
+    const endpoint = try std.fmt.allocPrint(alloc, "{s}/v2/teams", .{issuer_url});
+    defer alloc.free(endpoint);
 
     const auth_header = try std.fmt.allocPrint(alloc, "Bearer {s}", .{access_token});
     defer secret.zeroAndFree(alloc, auth_header);
@@ -1009,12 +986,9 @@ fn fetchTeamsFromJsHost(
     access_token: []const u8,
     issuer_url: []const u8,
 ) !std.ArrayList(Team) {
-    const e2e_endpoint = if (oauth_session.isLoopbackE2EIssuer(issuer_url))
-        try std.fmt.allocPrint(alloc, "{s}/v2/teams", .{issuer_url})
-    else
-        null;
-    defer if (e2e_endpoint) |endpoint| alloc.free(endpoint);
-    const endpoint = e2e_endpoint orelse teams_endpoint;
+    if (!oauth_session.isLoopbackE2EIssuer(issuer_url)) return error.NoTeams;
+    const endpoint = try std.fmt.allocPrint(alloc, "{s}/v2/teams", .{issuer_url});
+    defer alloc.free(endpoint);
 
     var response = try js_host_auth.executeBearerGet(alloc, endpoint, access_token);
     defer response.deinit(alloc);
@@ -1382,6 +1356,22 @@ fn writeStdoutFmt(comptime fmt: []const u8, args: anytype) !void {
     var buf: [512]u8 = undefined;
     const text = try std.fmt.bufPrint(&buf, fmt, args);
     try writeStdout(text);
+}
+
+test "legacy Vercel sign-in and team catalog stay local" {
+    var runtime: SignInRuntime = .{};
+    try std.testing.expectError(
+        error.RetiredGatewayLogin,
+        runtime.start(std.testing.allocator, oauth_transport.unavailable_provider),
+    );
+    try std.testing.expectError(
+        error.NoTeams,
+        loadTeamSelection(std.testing.allocator, oauth_transport.unavailable_provider),
+    );
+    try std.testing.expectError(
+        error.NoTeams,
+        fetchTeams(std.testing.allocator, "token", "https://vercel.com"),
+    );
 }
 
 test "login flow parses teams" {
