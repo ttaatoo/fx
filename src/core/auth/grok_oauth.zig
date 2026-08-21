@@ -351,7 +351,7 @@ test "Grok device authorization form uses the CLI scope" {
         scope,
     );
     defer device.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, state.payload[0..state.payload_len], "grok-cli:access") != null);
+    try std.testing.expect(std.mem.find(u8, state.payload[0..state.payload_len], "grok-cli%3Aaccess") != null);
     try std.testing.expect(std.mem.find(u8, state.payload[0..state.payload_len], "offline_access") != null);
     try std.testing.expectEqualStrings("ABCD-EFGH", device.user_code);
 }
