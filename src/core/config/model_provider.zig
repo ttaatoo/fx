@@ -26,7 +26,7 @@ pub fn label(provider: ProviderId) []const u8 {
         .gateway => "Vercel AI Gateway",
         .codex => "Codex subscription",
         .anthropic => "Anthropic Messages",
-        .xai => "xAI",
+        .xai => "SuperGrok",
     };
 }
 
@@ -37,9 +37,10 @@ pub fn isDirect(provider: ProviderId) bool {
 pub fn authorizesCredential(provider: ProviderId, source: ?types.CredentialSource) bool {
     const selected = source orelse return false;
     return switch (provider) {
-        .gateway => selected != .chatgpt_subscription and selected != .custom_provider,
+        .gateway => selected != .chatgpt_subscription and selected != .custom_provider and selected != .grok_subscription,
         .codex => selected == .chatgpt_subscription,
-        .anthropic, .xai => selected == .custom_provider,
+        .anthropic => selected == .custom_provider,
+        .xai => selected == .grok_subscription,
     };
 }
 
@@ -56,7 +57,9 @@ test "explicit providers authorize only their own credential origins" {
     try std.testing.expect(!authorizesCredential(.codex, .ai_gateway_api_key));
     try std.testing.expect(!authorizesCredential(.codex, null));
     try std.testing.expect(authorizesCredential(.anthropic, .custom_provider));
-    try std.testing.expect(authorizesCredential(.xai, .custom_provider));
+    try std.testing.expect(authorizesCredential(.xai, .grok_subscription));
+    try std.testing.expect(!authorizesCredential(.xai, .custom_provider));
+    try std.testing.expect(!authorizesCredential(.gateway, .grok_subscription));
     try std.testing.expect(!authorizesCredential(.anthropic, .ai_gateway_api_key));
     try std.testing.expect(!authorizesCredential(.xai, .fx_login));
 }

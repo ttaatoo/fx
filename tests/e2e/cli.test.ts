@@ -781,7 +781,7 @@ describe("cli: status", () => {
   );
 
   test(
-    "fx status and models use configured Anthropic and xAI providers",
+    "fx status and models use Anthropic keys and SuperGrok OAuth",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-direct-providers-"));
       try {
@@ -801,11 +801,20 @@ describe("cli: status", () => {
               },
               xai: {
                 api: "openai-completions",
-                baseUrl: "https://api.x.ai/v1",
-                apiKey: "$XAI_API_KEY",
                 models: [{ id: "grok-4.6" }, { id: "grok-code-fast-1" }],
               },
             },
+          }) + "\n",
+          { mode: 0o600 },
+        );
+        writeFileSync(
+          join(home, ".fx", "grok-auth.json"),
+          JSON.stringify({
+            version: 1,
+            access_token: "grok-e2e-access",
+            refresh_token: "grok-e2e-refresh",
+            expires_at_ms: 4102444800000,
+            client_id: "b1a00492-073a-47ea-816f-4c329264a828",
           }) + "\n",
           { mode: 0o600 },
         );
@@ -814,7 +823,6 @@ describe("cli: status", () => {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
           ANTHROPIC_API_KEY: "sk-ant-e2e-test",
-          XAI_API_KEY: "xai-e2e-test",
           FX_MODEL: "claude-opus-4-6",
         };
         const cwd = realpathSync(workspace);
@@ -840,7 +848,7 @@ describe("cli: status", () => {
 
         const provider = await runFx(["provider", "xai"], { cwd, env });
         expect(provider.code).toBe(0);
-        expect(provider.stdout).toContain("Provider set to xAI");
+        expect(provider.stdout).toContain("Provider set to SuperGrok");
 
         const xaiStatus = await runFx(["status", "--json"], {
           cwd,
@@ -849,7 +857,12 @@ describe("cli: status", () => {
         expect(xaiStatus.code).toBe(0);
         const xaiJson = JSON.parse(xaiStatus.stdout.trim());
         expect(xaiJson.model).toBe("grok-4.6");
-        expect(xaiJson.model_source).toBe("xAI");
+        expect(xaiJson.model_source).toBe("SuperGrok");
+        expect(xaiJson.auth).toBe("SuperGrok subscription");
+
+        const credits = await runFx(["credits"], { cwd, env });
+        expect(credits.code).not.toBe(0);
+        expect(credits.stderr).toContain("unavailable for direct providers");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

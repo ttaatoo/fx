@@ -5,6 +5,7 @@ const app_lifecycle = @import("../app/app_lifecycle.zig");
 const background_record_liveness = @import("../background/background_record_liveness.zig");
 const background_store = @import("../background/background_store.zig");
 const chatgpt_oauth = @import("../auth/chatgpt_oauth.zig");
+const grok_oauth = @import("../auth/grok_oauth.zig");
 const acp_runner = @import("acp_runner.zig");
 const cli_ask = @import("cli_ask.zig");
 const cli_replay = @import("cli_replay.zig");
@@ -778,7 +779,7 @@ fn runNonInteractiveWithDeps(
         .issue => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .issue),
         .login => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx login [vercel|codex]\n");
+                try writeStderr(deps, "usage: fx login [vercel|codex|grok]\n");
                 return .handled_failure;
             };
             // Preserve the original `fx login` behavior for scripts and users.
@@ -811,12 +812,26 @@ fn runNonInteractiveWithDeps(
                     try writeStderr(deps, message);
                     return .handled_failure;
                 },
+                .grok => grok_oauth.runLogin(
+                    alloc,
+                    cfg.gateway_provider.oauth_transport,
+                    cfg.url_opener,
+                ) catch |err| {
+                    const message = switch (err) {
+                        error.AccessDenied => "fx login: SuperGrok authorization denied\n",
+                        error.ExpiredToken, error.LoginTimedOut => "fx login: SuperGrok authorization expired; run fx login grok again\n",
+                        error.Cancelled => "fx login: SuperGrok sign-in cancelled\n",
+                        else => "fx login: failed to sign in with SuperGrok\n",
+                    };
+                    try writeStderr(deps, message);
+                    return .handled_failure;
+                },
             }
             return .handled_success;
         },
         .logout => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx logout [vercel|codex]\n");
+                try writeStderr(deps, "usage: fx logout [vercel|codex|grok]\n");
                 return .handled_failure;
             };
             // Preserve the original `fx logout` behavior for scripts and users.
@@ -837,6 +852,30 @@ fn runNonInteractiveWithDeps(
                     },
                     .deleted_not_durable => result: {
                         try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
+                        break :result .handled_failure;
+                    },
+                };
+            }
+            if (login_provider == .grok) {
+                const outcome = grok_oauth.logout() catch {
+                    try writeStderr(deps, "fx logout: failed to durably remove saved SuperGrok login\n");
+                    return .handled_failure;
+                };
+                if (grok_oauth.sourceExists(alloc) catch false) {
+                    try writeStdout(deps, "Removed ~/.fx/grok-auth.json. SuperGrok is still available from ~/.grok/auth.json. Run grok logout to clear that store.\n");
+                    return .handled_success;
+                }
+                return switch (outcome) {
+                    .deleted => result: {
+                        try writeStdout(deps, "Signed out of SuperGrok.\n");
+                        break :result .handled_success;
+                    },
+                    .missing => result: {
+                        try writeStdout(deps, "No SuperGrok login session found.\n");
+                        break :result .handled_success;
+                    },
+                    .deleted_not_durable => result: {
+                        try writeStderr(deps, "fx logout: failed to durably remove saved SuperGrok login\n");
                         break :result .handled_failure;
                     },
                 };
@@ -901,7 +940,7 @@ fn runNonInteractiveWithDeps(
                 try writeStdout(deps, switch (target) {
                     .codex => "Codex is already selected.\n",
                     .anthropic => "Anthropic is already selected.\n",
-                    .xai => "xAI is already selected.\n",
+                    .xai => "SuperGrok is already selected.\n",
                     .gateway => "Gateway is already selected.\n",
                 });
                 return .handled_success;
@@ -920,6 +959,21 @@ fn runNonInteractiveWithDeps(
                 chatgpt_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener) catch |err| {
                     debug_trace.logf("auth", "provider selection Codex login failed err={s}", .{@errorName(err)});
                     try writeStderr(deps, "fx provider: Codex login failed\n");
+                    return .handled_failure;
+                };
+                resolution = try credentials.resolveForProvider(
+                    alloc,
+                    cfg.gateway_provider.oauth_transport,
+                    cfg.secret_store,
+                    .refresh_if_needed,
+                    target,
+                    settings.credential_source,
+                );
+            }
+            if (resolution.credential == null and target == .xai) {
+                grok_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener) catch |err| {
+                    debug_trace.logf("auth", "provider selection SuperGrok login failed err={s}", .{@errorName(err)});
+                    try writeStderr(deps, "fx provider: SuperGrok login failed\n");
                     return .handled_failure;
                 };
                 resolution = try credentials.resolveForProvider(
@@ -987,7 +1041,7 @@ fn runNonInteractiveWithDeps(
             try writeStdout(deps, switch (target) {
                 .codex => "Provider set to Codex.\n",
                 .anthropic => "Provider set to Anthropic.\n",
-                .xai => "Provider set to xAI.\n",
+                .xai => "Provider set to SuperGrok.\n",
                 .gateway => "Provider set to Gateway.\n",
             });
             return .handled_success;

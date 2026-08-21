@@ -7,6 +7,7 @@ const direct_providers = @import("../core/config/direct_providers.zig");
 const gateway_provider = @import("../core/gateway/gateway_provider.zig");
 const io_mod = @import("../core/shared/io.zig");
 const types = @import("../core/shared/types.zig");
+const grok_oauth = @import("../core/auth/grok_oauth.zig");
 const gateway_client = @import("client.zig");
 const anthropic_messages = @import("anthropic_messages.zig");
 const openai_completions = @import("openai_completions.zig");
@@ -78,6 +79,7 @@ const OpenRequestOperation = struct {
     uri: std.Uri,
     extra_headers: []const std.http.Header,
     authorization: ?[]const u8,
+    user_agent: []const u8,
 
     pub fn run(self: *@This()) !OpenedRequest {
         return .{ .request = try self.client.request(.POST, self.uri, .{
@@ -88,7 +90,7 @@ const OpenRequestOperation = struct {
                 else
                     .omit,
                 .accept_encoding = .omit,
-                .user_agent = .{ .override = gateway_client.user_agent },
+                .user_agent = .{ .override = self.user_agent },
             },
             .extra_headers = self.extra_headers,
             .keep_alive = false,
@@ -102,18 +104,25 @@ fn streamCompletionCore(alloc: Allocator, request: stream_provider.Request) !str
     var catalog = try direct_providers.loadFromHome(alloc);
     defer catalog.deinit();
     const hit = catalog.findModel(request.model) orelse return error.UnknownDirectProviderModel;
-    const api_key = hit.provider.resolvedApiKey() orelse
-        (if (request.credential_source == .custom_provider and request.api_key.len > 0)
+    const use_grok_subscription = hit.provider.provider == .xai;
+    const api_key = if (use_grok_subscription)
+        (if (request.credential_source == .grok_subscription and request.api_key.len > 0)
             request.api_key
         else
-            return error.DirectProviderKeyMissing);
+            return error.DirectProviderKeyMissing)
+    else
+        hit.provider.resolvedApiKey() orelse
+            (if (request.credential_source == .custom_provider and request.api_key.len > 0)
+                request.api_key
+            else
+                return error.DirectProviderKeyMissing);
     const base_url = hit.provider.resolvedBaseUrl();
     if (!direct_providers.isAllowedBaseUrl(base_url)) return error.DirectProviderUrlNotAllowed;
     const request_url = try direct_providers.joinEndpoint(alloc, base_url, hit.provider.api.chatPath());
     defer alloc.free(request_url);
     const uri = try std.Uri.parse(request_url);
 
-    var extra_headers_buf: [6]std.http.Header = undefined;
+    var extra_headers_buf: [10]std.http.Header = undefined;
     var extra_count: usize = 0;
     extra_headers_buf[extra_count] = .{ .name = "accept", .value = "text/event-stream" };
     extra_count += 1;
@@ -122,10 +131,23 @@ fn streamCompletionCore(alloc: Allocator, request: stream_provider.Request) !str
     defer if (auth_header) |header| secret.zeroAndFree(alloc, header);
     var anthropic_key: ?[]u8 = null;
     defer if (anthropic_key) |header| secret.zeroAndFree(alloc, header);
+    var grok_user_agent: ?[]u8 = null;
+    defer if (grok_user_agent) |header| alloc.free(header);
 
     switch (hit.provider.api) {
         .openai_completions => {
             auth_header = try std.fmt.allocPrint(alloc, "Bearer {s}", .{api_key});
+            if (use_grok_subscription) {
+                extra_headers_buf[extra_count] = .{ .name = "X-XAI-Token-Auth", .value = grok_oauth.token_auth_header };
+                extra_count += 1;
+                extra_headers_buf[extra_count] = .{ .name = "x-grok-client-identifier", .value = grok_oauth.client_identifier };
+                extra_count += 1;
+                extra_headers_buf[extra_count] = .{ .name = "x-grok-client-version", .value = grok_oauth.clientVersion() };
+                extra_count += 1;
+                extra_headers_buf[extra_count] = .{ .name = "x-grok-model-override", .value = hit.model_id };
+                extra_count += 1;
+                grok_user_agent = try grok_oauth.chatProxyUserAgent(alloc);
+            }
         },
         .anthropic_messages => {
             anthropic_key = try alloc.dupe(u8, api_key);
@@ -143,6 +165,7 @@ fn streamCompletionCore(alloc: Allocator, request: stream_provider.Request) !str
         .uri = uri,
         .extra_headers = extra_headers_buf[0..extra_count],
         .authorization = auth_header,
+        .user_agent = grok_user_agent orelse gateway_client.user_agent,
     };
     const connect_deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
         .clock = .awake,

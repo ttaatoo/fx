@@ -9,6 +9,7 @@ const credentials = @import("../auth/credentials.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const login_flow = @import("../auth/login_flow.zig");
 const chatgpt_oauth = @import("../auth/chatgpt_oauth.zig");
+const grok_oauth = @import("../auth/grok_oauth.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
 const model_provider = @import("../config/model_provider.zig");
 const direct_providers = @import("../config/direct_providers.zig");
@@ -47,7 +48,9 @@ pub fn Runtime(comptime App: type) type {
                 const provider = provider_runtime.provider(app);
                 const required_source: credentials.Source = if (provider == .codex)
                     .chatgpt_subscription
-                else if (model_provider.isDirect(provider))
+                else if (provider == .xai)
+                    .grok_subscription
+                else if (provider == .anthropic)
                     .custom_provider
                 else
                     app.auth.credentialSource() orelse .fx_login;
@@ -67,7 +70,17 @@ pub fn Runtime(comptime App: type) type {
                     }, true);
                     app.shell.render_requests.request(.footer);
                     return false;
-                } else if (model_provider.isDirect(provider) and
+                } else if (provider == .xai and
+                    app.auth.credentialSource() != .grok_subscription)
+                {
+                    try app.writeDomainNotice(.{
+                        .topic = "auth",
+                        .tone = .warning,
+                        .body = credentials.missing_grok_interactive_credential_message,
+                    }, true);
+                    app.shell.render_requests.request(.footer);
+                    return false;
+                } else if (provider == .anthropic and
                     app.auth.credentialSource() != .custom_provider)
                 {
                     try app.writeDomainNotice(.{
@@ -167,7 +180,7 @@ pub fn Runtime(comptime App: type) type {
                     try writeAuthNotice(app, .{
                         .topic = "auth",
                         .tone = .warning,
-                        .body = "Usage: /logout [vercel|codex]",
+                        .body = "Usage: /logout [vercel|codex|grok]",
                     });
                     return;
                 };
@@ -176,12 +189,55 @@ pub fn Runtime(comptime App: type) type {
                 provider_runtime.provider(app) == .codex
             else
                 false;
+            const selected_model_uses_grok = if (comptime provider_runtime.supported(App))
+                provider_runtime.provider(app) == .xai
+            else
+                false;
             const provider_inventory = if (comptime @hasDecl(@TypeOf(app.auth), "pickerView")) inventory: {
                 try app.auth.refreshSourceInventory(app.alloc);
                 break :inventory app.auth.pickerView().available_sources;
             } else @as(auth_runtime.SourceSet, .empty);
             const chatgpt_is_only_logout_session = provider_inventory.contains(.chatgpt_subscription) and
-                !provider_inventory.contains(.fx_login);
+                !provider_inventory.contains(.fx_login) and
+                !provider_inventory.contains(.grok_subscription);
+            const grok_is_only_logout_session = provider_inventory.contains(.grok_subscription) and
+                !provider_inventory.contains(.fx_login) and
+                !provider_inventory.contains(.chatgpt_subscription);
+            const logout_grok = if (requested_provider) |provider|
+                provider == .grok
+            else
+                selected_model_uses_grok or
+                    app.auth.credentialSource() == .grok_subscription or
+                    grok_is_only_logout_session;
+            if (logout_grok) {
+                const outcome = grok_oauth.logout() catch {
+                    try writeAuthNotice(app, .{
+                        .topic = "auth",
+                        .tone = .@"error",
+                        .body = "Could not durably sign out of SuperGrok. The current source is unchanged.",
+                    });
+                    return;
+                };
+                const changed = if (comptime @hasDecl(@TypeOf(app.auth), "reconcileAfterGrokLogout"))
+                    try app.auth.reconcileAfterGrokLogout(app.alloc)
+                else
+                    false;
+                applyCredentialChange(app, changed);
+                if (grok_oauth.sourceExists(app.alloc) catch false) {
+                    try writeAuthNotice(app, .{
+                        .topic = "auth",
+                        .tone = .neutral,
+                        .body = "Removed ~/.fx/grok-auth.json. SuperGrok is still available from ~/.grok/auth.json. Run grok logout to clear that store.",
+                    });
+                    return;
+                }
+                try writeAuthNotice(app, switch (outcome) {
+                    .deleted => .{ .topic = "auth", .tone = .neutral, .body = "Signed out of SuperGrok." },
+                    .missing => .{ .topic = "auth", .tone = .neutral, .body = "No SuperGrok login session found." },
+                    .deleted_not_durable => .{ .topic = "auth", .tone = .warning, .body = "Signed out of SuperGrok, but could not confirm the profile directory update." },
+                });
+                return;
+            }
             const logout_chatgpt = if (requested_provider) |provider|
                 provider == .codex
             else
@@ -286,6 +342,7 @@ pub fn Runtime(comptime App: type) type {
                 .action => |action| switch (action) {
                     .login => try beginSignIn(app, true),
                     .chatgpt_login => try beginChatGptSignIn(app),
+                    .grok_login => try beginGrokSignIn(app),
                     .setup => {
                         if (comptime !runtime_profile.allows(App, .native_auth)) {
                             try app.writeDomainNotice(.{
@@ -352,7 +409,8 @@ pub fn Runtime(comptime App: type) type {
             else
                 .fx_login;
             const completes_provider_switch = if (comptime @hasDecl(@TypeOf(app.auth), "signInReturnsToRoot"))
-                sign_in_source == .chatgpt_subscription and !app.auth.signInReturnsToRoot()
+                (sign_in_source == .chatgpt_subscription or sign_in_source == .grok_subscription) and
+                    !app.auth.signInReturnsToRoot()
             else
                 false;
             app.auth.pulseSignIn(app.alloc);
@@ -422,6 +480,39 @@ pub fn Runtime(comptime App: type) type {
                                 .topic = "auth",
                                 .tone = .neutral,
                                 .body = "Signed in with Codex.",
+                            });
+                        },
+                        .grok => {
+                            try app.auth.refreshSourceInventory(app.alloc);
+                            if (completes_provider_switch and comptime provider_runtime.supported(App)) {
+                                app.auth.closePicker(app.alloc);
+                                try switchProvider(app, .xai, false);
+                                return;
+                            }
+                            const selected_model_uses_grok = if (comptime provider_runtime.supported(App))
+                                provider_runtime.provider(app) == .xai
+                            else
+                                false;
+                            if (selected_model_uses_grok and
+                                !try selectCredentialSource(app, .grok_subscription))
+                            {
+                                _ = app.auth.popPickerStage(app.alloc);
+                                try writeAuthNotice(app, .{
+                                    .topic = "auth",
+                                    .tone = .@"error",
+                                    .body = "Signed in, but the SuperGrok credential could not be loaded.",
+                                });
+                                return;
+                            }
+                            if (!selected_model_uses_grok) {
+                                app.model_cache.reset();
+                                if (comptime @hasDecl(App, "startModelCacheWarmup")) app.startModelCacheWarmup();
+                            }
+                            app.auth.closePicker(app.alloc);
+                            try writeAuthNotice(app, .{
+                                .topic = "auth",
+                                .tone = .neutral,
+                                .body = "Signed in with SuperGrok.",
                             });
                         },
                     }
@@ -572,7 +663,7 @@ pub fn Runtime(comptime App: type) type {
         fn rememberCredentialSource(app: *App, source: credentials.Source) void {
             // ChatGPT is selected by model route, not as a global Gateway
             // credential preference. Its saved session coexists independently.
-            if (source == .chatgpt_subscription) return;
+            if (source == .chatgpt_subscription or source == .grok_subscription) return;
             if (comptime @hasDecl(App, "persistCredentialSourcePreference")) {
                 app.persistCredentialSourcePreference(source);
                 return;
@@ -612,6 +703,32 @@ pub fn Runtime(comptime App: type) type {
             if (started catch |err| {
                 debug_trace.logf("auth", "Codex login failed err={s}", .{@errorName(err)});
                 try writeLoginError(app, .chatgpt_subscription, err);
+                return;
+            }) {
+                app.shell.render_requests.request(.footer);
+                if (io_mod.getenv("FX_NO_OPEN_BROWSER") == null) try openSignInBrowser(app);
+            }
+        }
+
+        fn beginGrokSignIn(app: *App) !void {
+            try app.flushBeforeBlockingExternalWork();
+            const started = app.auth.openGrokSignInPickerFromRoot(app.alloc);
+            if (started catch |err| {
+                debug_trace.logf("auth", "SuperGrok login failed err={s}", .{@errorName(err)});
+                try writeLoginError(app, .grok_subscription, err);
+                return;
+            }) {
+                app.shell.render_requests.request(.footer);
+                if (io_mod.getenv("FX_NO_OPEN_BROWSER") == null) try openSignInBrowser(app);
+            }
+        }
+
+        fn beginGrokSignInForProviderSwitch(app: *App) !void {
+            try app.flushBeforeBlockingExternalWork();
+            const started = app.auth.openGrokSignInPickerForProviderSwitch(app.alloc);
+            if (started catch |err| {
+                debug_trace.logf("auth", "SuperGrok login failed err={s}", .{@errorName(err)});
+                try writeLoginError(app, .grok_subscription, err);
                 return;
             }) {
                 app.shell.render_requests.request(.footer);
@@ -692,6 +809,10 @@ pub fn Runtime(comptime App: type) type {
             var credential = resolution.credential orelse {
                 if (target == .codex and allow_login) {
                     try beginCodexSignInForProviderSwitch(app);
+                    return;
+                }
+                if (target == .xai and allow_login) {
+                    try beginGrokSignInForProviderSwitch(app);
                     return;
                 }
                 try app.writeDomainNotice(.{
@@ -1052,6 +1173,12 @@ pub fn Runtime(comptime App: type) type {
                     error.ChatGptAuthorizationFailed => .{ .topic = "auth", .tone = .@"error", .body = "Codex sign-in was denied. The current credential is unchanged." },
                     error.ChatGptLoginTimedOut, error.LoginTimedOut => .{ .topic = "auth", .tone = .warning, .body = "Codex sign-in expired. The current credential is unchanged; run /login to try again." },
                     else => .{ .topic = "auth", .tone = .@"error", .body = "Codex sign-in failed. The current credential is unchanged." },
+                }
+            else if (source == .grok_subscription)
+                switch (err) {
+                    error.AccessDenied => .{ .topic = "auth", .tone = .@"error", .body = "SuperGrok sign-in was denied. The current credential is unchanged." },
+                    error.ExpiredToken, error.LoginTimedOut => .{ .topic = "auth", .tone = .warning, .body = "SuperGrok sign-in expired. The current credential is unchanged; run /login to try again." },
+                    else => .{ .topic = "auth", .tone = .@"error", .body = "SuperGrok sign-in failed. The current credential is unchanged." },
                 }
             else switch (err) {
                 error.ClientIdMissing => .{ .topic = "auth", .tone = .@"error", .body = "fx login is not configured yet. The current credential is unchanged." },

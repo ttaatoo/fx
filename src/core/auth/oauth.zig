@@ -126,12 +126,36 @@ pub fn requestDeviceAuthorization(
     defer writer.deinit();
     try form.append(&writer.writer, "client_id", client_id);
     try form.append(&writer.writer, "scope", default_scope);
+    return finishDeviceAuthorization(alloc, transport, metadata, writer.written());
+}
+
+pub fn requestDeviceAuthorizationWithScope(
+    alloc: Allocator,
+    transport: oauth_transport.Provider,
+    metadata: Metadata,
+    client_id: []const u8,
+    scope: []const u8,
+) !DeviceAuthorization {
+    var form: FormBody = .{};
+    var writer: std.Io.Writer.Allocating = .init(alloc);
+    defer writer.deinit();
+    try form.append(&writer.writer, "client_id", client_id);
+    try form.append(&writer.writer, "scope", scope);
+    return finishDeviceAuthorization(alloc, transport, metadata, writer.written());
+}
+
+fn finishDeviceAuthorization(
+    alloc: Allocator,
+    transport: oauth_transport.Provider,
+    metadata: Metadata,
+    payload: []const u8,
+) !DeviceAuthorization {
     const bytes = try fetchJson(
         alloc,
         transport,
         .post_form,
         metadata.device_authorization_endpoint,
-        writer.written(),
+        payload,
         .{},
     );
     defer secret.zeroAndFree(alloc, bytes);
@@ -284,7 +308,7 @@ pub fn parseTokenSet(alloc: Allocator, bytes: []const u8) !TokenSet {
     errdefer secret.zeroAndFree(alloc, access_token);
     const refresh_token = try dupeOptionalString(alloc, object, "refresh_token");
     errdefer if (refresh_token) |value| secret.zeroAndFree(alloc, value);
-    const expires_in = try requiredInteger(object, "expires_in");
+    const expires_in = requiredInteger(object, "expires_in") catch 3600;
     return .{
         .access_token = access_token,
         .refresh_token = refresh_token,

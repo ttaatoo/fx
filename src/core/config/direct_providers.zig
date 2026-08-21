@@ -1,5 +1,7 @@
 const std = @import("std");
 const io_mod = @import("../shared/io.zig");
+const grok_oauth = @import("../auth/grok_oauth.zig");
+const grok_session = @import("../auth/grok_session.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
 const model_provider = @import("model_provider.zig");
 
@@ -22,21 +24,21 @@ pub const ApiKind = enum {
     pub fn defaultBaseUrl(self: ApiKind) []const u8 {
         return switch (self) {
             .anthropic_messages => "https://api.anthropic.com",
-            .openai_completions => "https://api.x.ai/v1",
+            .openai_completions => grok_oauth.chat_proxy_base_url,
         };
     }
 
     pub fn defaultEnvKey(self: ApiKind) []const u8 {
         return switch (self) {
             .anthropic_messages => "ANTHROPIC_API_KEY",
-            .openai_completions => "XAI_API_KEY",
+            .openai_completions => "",
         };
     }
 
     pub fn defaultBaseUrlEnv(self: ApiKind) []const u8 {
         return switch (self) {
             .anthropic_messages => "ANTHROPIC_BASE_URL",
-            .openai_completions => "XAI_BASE_URL",
+            .openai_completions => "GROK_CLI_CHAT_PROXY_BASE_URL",
         };
     }
 
@@ -76,9 +78,20 @@ pub const ProviderEntry = struct {
 
     pub fn resolvedBaseUrl(self: ProviderEntry) []const u8 {
         const configured = std.mem.trim(u8, self.base_url, " \t\r\n");
-        if (configured.len > 0) return configured;
-        if (nonEmptyEnv(self.api.defaultBaseUrlEnv())) |override| return override;
-        return self.api.defaultBaseUrl();
+        const raw = if (configured.len > 0)
+            configured
+        else
+            nonEmptyEnv(self.api.defaultBaseUrlEnv()) orelse self.api.defaultBaseUrl();
+        if (self.provider == .xai) return grok_oauth.effectiveChatBaseUrl(raw);
+        return raw;
+    }
+
+    pub fn isReady(self: ProviderEntry, alloc: Allocator) bool {
+        return switch (self.provider) {
+            .anthropic => self.resolvedApiKey() != null,
+            .xai => grok_session.sourceExists(alloc) catch false,
+            .gateway, .codex => false,
+        };
     }
 
     pub fn containsModel(self: ProviderEntry, model: []const u8) bool {
@@ -146,6 +159,17 @@ pub const Catalog = struct {
     pub fn firstUsable(self: *const Catalog) ?ModelHit {
         for (self.entries) |*entry| {
             if (entry.models.len == 0) continue;
+            if (!entry.isReady(self.alloc)) continue;
+            if (!isAllowedBaseUrl(entry.resolvedBaseUrl())) continue;
+            return .{ .provider = entry, .model_id = entry.models[0].id };
+        }
+        return null;
+    }
+
+    pub fn firstApiKeyUsable(self: *const Catalog) ?ModelHit {
+        for (self.entries) |*entry| {
+            if (entry.provider == .xai) continue;
+            if (entry.models.len == 0) continue;
             if (entry.resolvedApiKey() == null) continue;
             if (!isAllowedBaseUrl(entry.resolvedBaseUrl())) continue;
             return .{ .provider = entry, .model_id = entry.models[0].id };
@@ -154,7 +178,7 @@ pub const Catalog = struct {
     }
 
     pub fn hasUsableKey(self: *const Catalog) bool {
-        return self.firstUsable() != null;
+        return self.firstApiKeyUsable() != null;
     }
 
     pub fn preferredModel(
@@ -176,12 +200,17 @@ pub fn loadFromHome(alloc: Allocator) !Catalog {
     return loadFromHomeDir(alloc, home);
 }
 
+pub const default_xai_model_ids = [_][]const u8{ "grok-4.6", "grok-code-fast-1" };
+
 pub fn loadFromHomeDir(alloc: Allocator, home: []const u8) !Catalog {
     const providers_path = try profile_paths.providersPath(alloc, home);
     defer alloc.free(providers_path);
     if (readOptionalJson(alloc, providers_path)) |bytes| {
         defer alloc.free(bytes);
-        return parseProvidersDocument(alloc, bytes);
+        var catalog = try parseProvidersDocument(alloc, bytes);
+        errdefer catalog.deinit();
+        try ensureDefaultXai(&catalog);
+        return catalog;
     } else |err| switch (err) {
         error.FileNotFound => {},
         else => return err,
@@ -191,12 +220,18 @@ pub fn loadFromHomeDir(alloc: Allocator, home: []const u8) !Catalog {
     defer alloc.free(settings_path);
     if (readOptionalJson(alloc, settings_path)) |bytes| {
         defer alloc.free(bytes);
-        return parseProvidersDocument(alloc, bytes);
+        var catalog = try parseProvidersDocument(alloc, bytes);
+        errdefer catalog.deinit();
+        try ensureDefaultXai(&catalog);
+        return catalog;
     } else |err| switch (err) {
         error.FileNotFound => {},
         else => return err,
     }
-    return Catalog.empty(alloc);
+    var catalog = Catalog.empty(alloc);
+    errdefer catalog.deinit();
+    try ensureDefaultXai(&catalog);
+    return catalog;
 }
 
 pub fn resolveSecretSpec(spec: []const u8) ?[]const u8 {
@@ -309,6 +344,35 @@ fn parseProvidersDocument(alloc: Allocator, bytes: []const u8) !Catalog {
 
     catalog.entries = try collected.toOwnedSlice(alloc);
     return catalog;
+}
+
+fn ensureDefaultXai(catalog: *Catalog) !void {
+    if (catalog.findByProvider(.xai) != null) return;
+    if (!(grok_session.sourceExists(catalog.alloc) catch false)) return;
+    try appendDefaultXai(catalog);
+}
+
+fn appendDefaultXai(catalog: *Catalog) !void {
+    const models = try catalog.alloc.alloc(ModelRef, default_xai_model_ids.len);
+    errdefer catalog.alloc.free(models);
+    for (default_xai_model_ids, 0..) |id, i| {
+        models[i] = .{ .id = try retain(catalog, id) };
+    }
+    const new_entries = try catalog.alloc.alloc(ProviderEntry, catalog.entries.len + 1);
+    errdefer catalog.alloc.free(new_entries);
+    if (catalog.entries.len > 0) {
+        @memcpy(new_entries[0..catalog.entries.len], catalog.entries);
+        catalog.alloc.free(catalog.entries);
+    }
+    new_entries[new_entries.len - 1] = .{
+        .id = try retain(catalog, "xai"),
+        .provider = .xai,
+        .api = .openai_completions,
+        .base_url = try retain(catalog, grok_oauth.chat_proxy_base_url),
+        .api_key_spec = null,
+        .models = models,
+    };
+    catalog.entries = new_entries;
 }
 
 fn parseProviderEntry(catalog: *Catalog, key: []const u8, value: std.json.Value) !?ProviderEntry {
@@ -438,7 +502,6 @@ test "direct provider catalog loads providers.json and matches models" {
         \\    "xai": {
         \\      "api": "openai-completions",
         \\      "baseUrl": "https://api.x.ai/v1",
-        \\      "apiKey": "$XAI_API_KEY",
         \\      "models": [{"id": "grok-4.6"}, "grok-code-fast-1"]
         \\    }
         \\  }
@@ -452,7 +515,6 @@ test "direct provider catalog loads providers.json and matches models" {
     defer environ.deinit();
     try environ.put("HOME", home);
     try environ.put("ANTHROPIC_API_KEY", "sk-ant-test");
-    try environ.put("XAI_API_KEY", "xai-test");
     io_mod.setEnvironMap(&environ);
     const restore_env = try stableEmptyTestEnviron();
     defer io_mod.setEnvironMap(restore_env);
@@ -461,7 +523,11 @@ test "direct provider catalog loads providers.json and matches models" {
     defer catalog.deinit();
     try std.testing.expectEqual(@as(usize, 2), catalog.entries.len);
     try std.testing.expectEqualStrings("sk-ant-test", catalog.findByProvider(.anthropic).?.resolvedApiKey().?);
-    try std.testing.expectEqualStrings("xai-test", catalog.findByProvider(.xai).?.resolvedApiKey().?);
+    try std.testing.expect(catalog.findByProvider(.xai).?.resolvedApiKey() == null);
+    try std.testing.expectEqualStrings(
+        grok_oauth.chat_proxy_base_url,
+        catalog.findByProvider(.xai).?.resolvedBaseUrl(),
+    );
     try std.testing.expectEqualStrings("claude-opus-4-6", catalog.findModel("anthropic/claude-opus-4-6").?.model_id);
     try std.testing.expectEqualStrings("grok-4.6", catalog.findModel("grok-4.6").?.model_id);
     try std.testing.expect(catalog.findModel("missing-model") == null);
@@ -522,6 +588,44 @@ test "startup overlay prefers FX_MODEL matches and usable direct providers" {
     );
     try std.testing.expectEqual(model_provider.ProviderId.gateway, keep_env_model.provider);
     try std.testing.expectEqualStrings("env-model", keep_env_model.model);
+}
+
+test "startup overlay selects SuperGrok when an OAuth session is present" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    var auth_file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/grok-auth.json", .{
+        .permissions = std.Io.File.Permissions.fromMode(0o600),
+    });
+    try auth_file.writeStreamingAll(io_mod.getIo(),
+        \\{"version":1,"access_token":"grok-access","refresh_token":"grok-refresh","expires_at_ms":4102444800000,"client_id":"b1a00492-073a-47ea-816f-4c329264a828"}
+        \\
+    );
+    auth_file.close(io_mod.getIo());
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+
+    var environ = std.process.Environ.Map.init(alloc);
+    defer environ.deinit();
+    try environ.put("HOME", home);
+    io_mod.setEnvironMap(&environ);
+    const restore_env = try stableEmptyTestEnviron();
+    defer io_mod.setEnvironMap(restore_env);
+
+    var catalog = try loadFromHomeDir(alloc, home);
+    defer catalog.deinit();
+    try std.testing.expectEqualStrings("grok-4.6", catalog.findModel("grok-4.6").?.model_id);
+    try std.testing.expect(catalog.findByProvider(.xai).?.isReady(alloc));
+
+    const auto = overlayStartupSelection(
+        &catalog,
+        .{ .provider = .gateway, .model = "zai/glm-5.2" },
+        "zai/glm-5.2",
+        false,
+    );
+    try std.testing.expectEqual(model_provider.ProviderId.xai, auto.provider);
+    try std.testing.expectEqualStrings("grok-4.6", auto.model);
 }
 
 test "endpoint joining and URL allowlist" {

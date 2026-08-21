@@ -754,6 +754,7 @@ pub const ModelListSnapshot = struct {
             .credential_refresh_failed => "Vercel sign-in refresh failed; using the public model catalog.",
             .authenticated_credential_rejected => "Your Gateway credential was rejected; using the public model catalog.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
+            .grok_subscription => "SuperGrok models require an authenticated SuperGrok session.",
         };
     }
 };
@@ -2044,6 +2045,30 @@ test "status names a direct provider model source" {
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expect(std.mem.find(u8, json, "\"model_source\":\"Anthropic Messages\"") != null);
+}
+
+test "status names a SuperGrok subscription model source" {
+    const snapshot = StatusSnapshot{
+        .model = "grok-4.6",
+        .provider = .xai,
+        .auth = .{
+            .active_source = .grok_subscription,
+        },
+        .permission_mode = .auto,
+        .workspace_root = "/tmp/fx",
+        .history_turns = 0,
+        .session_permission_grants = 0,
+        .agent_step_limit = 24,
+    };
+    const text = try snapshot.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "model_source=SuperGrok") != null);
+    try std.testing.expect(std.mem.find(u8, text, "auth=SuperGrok subscription") != null);
+
+    const json = try snapshot.renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"model_source\":\"SuperGrok\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"auth\":\"SuperGrok subscription\"") != null);
 }
 
 test "MCP config diagnostic renders in status text and JSON but not interactive body" {
