@@ -9,6 +9,7 @@ const host = @import("../hosts/host.zig");
 const io_mod = @import("../shared/io.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
 const model_provider = @import("../config/model_provider.zig");
+const direct_providers = @import("../config/direct_providers.zig");
 const output_contracts = @import("../output/output_contracts.zig");
 const permissions = @import("../permissions/permissions.zig");
 const sandbox = @import("../permissions/sandbox.zig");
@@ -1117,8 +1118,25 @@ pub fn Commands(comptime App: type) type {
         }
 
         fn setResolvedModelRuntime(app: *App, resolved: []const u8, announce: bool) !void {
-            if (!std.mem.eql(u8, provider_runtime.model(app), resolved)) {
-                try provider_runtime.replaceModel(app, resolved);
+            var target_provider = provider_runtime.provider(app);
+            if (direct_providers.loadFromHome(app.alloc)) |loaded| {
+                var catalog = loaded;
+                defer catalog.deinit();
+                if (catalog.findModel(resolved)) |hit| {
+                    target_provider = hit.provider.provider;
+                }
+            } else |_| {}
+            const current_provider = provider_runtime.provider(app);
+            const current_model = provider_runtime.model(app);
+            if (target_provider != current_provider or !std.mem.eql(u8, current_model, resolved)) {
+                if (target_provider != current_provider) {
+                    if (comptime @hasField(App, "auth")) {
+                        if (@hasDecl(@TypeOf(app.auth), "selectForProvider")) {
+                            _ = app.auth.selectForProvider(app.alloc, target_provider) catch {};
+                        }
+                    }
+                }
+                try provider_runtime.replaceSelection(app, target_provider, resolved);
             }
             const selected = provider_runtime.model(app);
             try app.worker.syncQueuedPromptModel(std.heap.c_allocator, selected);

@@ -5,6 +5,7 @@ const app_lifecycle = @import("../app/app_lifecycle.zig");
 const background_record_liveness = @import("../background/background_record_liveness.zig");
 const background_store = @import("../background/background_store.zig");
 const chatgpt_oauth = @import("../auth/chatgpt_oauth.zig");
+const grok_oauth = @import("../auth/grok_oauth.zig");
 const acp_runner = @import("acp_runner.zig");
 const cli_ask = @import("cli_ask.zig");
 const cli_replay = @import("cli_replay.zig");
@@ -13,6 +14,8 @@ const collections = @import("../shared/collections.zig");
 const config_runtime = @import("../config/config_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
 const model_provider = @import("../config/model_provider.zig");
+const direct_providers = @import("../config/direct_providers.zig");
+const direct_provider = @import("../../gateway/direct_provider.zig");
 const devbox_executor = @import("../execution/devbox_executor.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const doctor_runtime = @import("doctor_runtime.zig");
@@ -226,6 +229,25 @@ fn selectCatalogModel(
         }
     }
     return if (entries.len > 0) entries[0].id else null;
+}
+
+fn selectProviderCatalogModel(
+    alloc: Allocator,
+    target: model_provider.ProviderId,
+    entries: []const model_catalog.ModelCatalogEntry,
+    saved: ?[]const u8,
+) !?[]const u8 {
+    if (model_provider.isDirect(target)) {
+        var catalog = try direct_providers.loadFromHome(alloc);
+        defer catalog.deinit();
+        if (catalog.preferredModel(target, saved)) |preferred| {
+            for (entries) |entry| {
+                if (std.mem.eql(u8, entry.id, preferred)) return entry.id;
+            }
+        }
+        return null;
+    }
+    return selectCatalogModel(entries, saved);
 }
 
 const UpgradeOptions = struct {
@@ -757,7 +779,7 @@ fn runNonInteractiveWithDeps(
         .issue => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .issue),
         .login => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx login [vercel|codex]\n");
+                try writeStderr(deps, "usage: fx login [vercel|codex|grok]\n");
                 return .handled_failure;
             };
             // Preserve the original `fx login` behavior for scripts and users.
@@ -790,12 +812,26 @@ fn runNonInteractiveWithDeps(
                     try writeStderr(deps, message);
                     return .handled_failure;
                 },
+                .grok => grok_oauth.runLogin(
+                    alloc,
+                    cfg.gateway_provider.oauth_transport,
+                    cfg.url_opener,
+                ) catch |err| {
+                    const message = switch (err) {
+                        error.AccessDenied => "fx login: SuperGrok authorization denied\n",
+                        error.ExpiredToken, error.LoginTimedOut => "fx login: SuperGrok authorization expired; run fx login grok again\n",
+                        error.Cancelled => "fx login: SuperGrok sign-in cancelled\n",
+                        else => "fx login: failed to sign in with SuperGrok\n",
+                    };
+                    try writeStderr(deps, message);
+                    return .handled_failure;
+                },
             }
             return .handled_success;
         },
         .logout => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx logout [vercel|codex]\n");
+                try writeStderr(deps, "usage: fx logout [vercel|codex|grok]\n");
                 return .handled_failure;
             };
             // Preserve the original `fx logout` behavior for scripts and users.
@@ -816,6 +852,30 @@ fn runNonInteractiveWithDeps(
                     },
                     .deleted_not_durable => result: {
                         try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
+                        break :result .handled_failure;
+                    },
+                };
+            }
+            if (login_provider == .grok) {
+                const outcome = grok_oauth.logout() catch {
+                    try writeStderr(deps, "fx logout: failed to durably remove saved SuperGrok login\n");
+                    return .handled_failure;
+                };
+                if (grok_oauth.sourceExists(alloc) catch false) {
+                    try writeStdout(deps, "Removed ~/.fx/grok-auth.json. SuperGrok is still available from ~/.grok/auth.json. Run grok logout to clear that store.\n");
+                    return .handled_success;
+                }
+                return switch (outcome) {
+                    .deleted => result: {
+                        try writeStdout(deps, "Signed out of SuperGrok.\n");
+                        break :result .handled_success;
+                    },
+                    .missing => result: {
+                        try writeStdout(deps, "No SuperGrok login session found.\n");
+                        break :result .handled_success;
+                    },
+                    .deleted_not_durable => result: {
+                        try writeStderr(deps, "fx logout: failed to durably remove saved SuperGrok login\n");
                         break :result .handled_failure;
                     },
                 };
@@ -861,11 +921,11 @@ fn runNonInteractiveWithDeps(
         },
         .provider => |rest| {
             if (rest.len != 1) {
-                try writeStderr(deps, "usage: fx provider <gateway|codex>\n");
+                try writeStderr(deps, "usage: fx provider <gateway|codex|anthropic|xai>\n");
                 return .handled_failure;
             }
             const target = model_provider.parse(rest[0]) orelse {
-                try writeStderr(deps, "fx provider: expected gateway or codex\n");
+                try writeStderr(deps, "fx provider: expected gateway, codex, anthropic, or xai\n");
                 return .handled_failure;
             };
             const workspace_root = try io_mod.realpathAlloc(alloc, ".");
@@ -877,7 +937,12 @@ fn runNonInteractiveWithDeps(
             };
             defer settings.deinit(alloc);
             if ((settings.provider orelse .gateway) == target) {
-                try writeStdout(deps, if (target == .codex) "Codex is already selected.\n" else "Gateway is already selected.\n");
+                try writeStdout(deps, switch (target) {
+                    .codex => "Codex is already selected.\n",
+                    .anthropic => "Anthropic is already selected.\n",
+                    .xai => "SuperGrok is already selected.\n",
+                    .gateway => "Gateway is already selected.\n",
+                });
                 return .handled_success;
             }
 
@@ -905,11 +970,25 @@ fn runNonInteractiveWithDeps(
                     settings.credential_source,
                 );
             }
+            if (resolution.credential == null and target == .xai) {
+                grok_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener) catch |err| {
+                    debug_trace.logf("auth", "provider selection SuperGrok login failed err={s}", .{@errorName(err)});
+                    try writeStderr(deps, "fx provider: SuperGrok login failed\n");
+                    return .handled_failure;
+                };
+                resolution = try credentials.resolveForProvider(
+                    alloc,
+                    cfg.gateway_provider.oauth_transport,
+                    cfg.secret_store,
+                    .refresh_if_needed,
+                    target,
+                    settings.credential_source,
+                );
+            }
             const credential = if (resolution.credential) |*value| value else {
-                try writeStderr(deps, if (target == .codex)
-                    "fx provider: run fx login codex first\n"
-                else
-                    "fx provider: configure a Gateway credential first\n");
+                try writeStderr(deps, "fx provider: ");
+                try writeStderr(deps, credentials.missingCredentialMessage(target, .cli));
+                try writeStderr(deps, "\n");
                 return .handled_failure;
             };
             const catalog_provider = if (target == .codex)
@@ -917,6 +996,8 @@ fn runNonInteractiveWithDeps(
                     try writeStderr(deps, "fx provider: Codex model catalog is unavailable\n");
                     return .handled_failure;
                 }
+            else if (model_provider.isDirect(target))
+                direct_provider.model_catalog_provider
             else
                 cfg.gateway_provider.model_catalog;
             const fetch_result = model_catalog.fetchWithPublicFallback(catalog_provider, alloc, .{
@@ -940,7 +1021,7 @@ fn runNonInteractiveWithDeps(
             };
             defer model_catalog.freeModelCatalog(alloc, &loaded.catalog);
             const saved_model = if (target == .codex) settings.codex_model else settings.model;
-            const selected_model = selectCatalogModel(loaded.catalog.items, saved_model) orelse {
+            const selected_model = (try selectProviderCatalogModel(alloc, target, loaded.catalog.items, saved_model)) orelse {
                 try writeStderr(deps, "fx provider: target model catalog is empty\n");
                 return .handled_failure;
             };
@@ -957,7 +1038,12 @@ fn runNonInteractiveWithDeps(
                 },
                 .outcome => {},
             }
-            try writeStdout(deps, if (target == .codex) "Provider set to Codex.\n" else "Provider set to Gateway.\n");
+            try writeStdout(deps, switch (target) {
+                .codex => "Provider set to Codex.\n",
+                .anthropic => "Provider set to Anthropic.\n",
+                .xai => "Provider set to SuperGrok.\n",
+                .gateway => "Provider set to Gateway.\n",
+            });
             return .handled_success;
         },
         .setup => |rest| {
@@ -1040,6 +1126,8 @@ fn runNonInteractiveWithDeps(
                     try writeStderr(deps, "fx models: Codex model catalog is unavailable\n");
                     return .handled_failure;
                 }
+            else if (model_provider.isDirect(startup.provider))
+                direct_provider.cli_model_catalog_provider
             else
                 cfg.gateway_provider.cli_model_catalog;
             const loaded = switch (catalog_provider.fetch(alloc, .{
@@ -1444,6 +1532,17 @@ fn runNonInteractiveWithDeps(
             );
             defer startup.deinit(alloc);
             try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+            if (model_provider.isDirect(startup.provider)) {
+                const message = "credits are a Vercel AI Gateway feature and are unavailable for direct providers";
+                if (opts.format == .json) {
+                    try writeJsonCommandFailureCode(alloc, deps, "credits", "Unavailable", message);
+                } else {
+                    try writeStderr(deps, "fx credits: ");
+                    try writeStderr(deps, message);
+                    try writeStderr(deps, "\n");
+                }
+                return .handled_failure;
+            }
 
             var snapshot = cfg.gateway_provider.credits.fetch(alloc, .{
                 .credential = startup.apiKey(),

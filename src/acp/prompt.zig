@@ -250,6 +250,7 @@ const AcpContext = struct {
             .permission_reviewer_provider = switch (session.provider) {
                 .gateway => self.state.cfg.permission_reviewer_provider,
                 .codex => self.state.cfg.codex_permission_reviewer_provider,
+                .anthropic, .xai => null,
             },
             .auto_classifier = self.auto_classifier,
             .subagent_host = self.state.subagent_host,
@@ -707,6 +708,10 @@ pub fn runSubagentChild(
             .codex = .{
                 .agent_stream_provider = server.streamProviderFor(state, .codex),
                 .permission_reviewer_provider = state.cfg.codex_permission_reviewer_provider,
+            },
+            .direct = .{
+                .agent_stream_provider = server.streamProviderFor(state, .anthropic),
+                .permission_reviewer_provider = null,
             },
         },
         .system_prompt = state.cfg.prompt_policy.system_prompt,

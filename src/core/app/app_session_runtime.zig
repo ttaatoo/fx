@@ -350,7 +350,7 @@ pub const SessionPreferencePatch = struct {
         };
         if (self.provider) |provider| {
             switch (provider) {
-                .gateway => patch.model = self.model,
+                .gateway, .anthropic, .xai => patch.model = self.model,
                 .codex => patch.codex_model = self.model,
             }
         } else {

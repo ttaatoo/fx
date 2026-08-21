@@ -28,6 +28,7 @@ const mcp_runtime = @import("../mcp/mcp_runtime.zig");
 const app_mcp_runtime = @import("app_mcp_runtime.zig");
 const model_cache_runtime = @import("model_cache_runtime.zig");
 const provider_runtime = @import("provider_runtime.zig");
+const model_provider = @import("../config/model_provider.zig");
 const permissions = @import("../permissions/permissions.zig");
 const session_permission_state = @import("../permissions/session_permission_state.zig");
 const sandbox = @import("../permissions/sandbox.zig");
@@ -1614,6 +1615,16 @@ pub fn Handlers(comptime App: type) type {
 
         fn commandShowCredits(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
+            if (comptime provider_runtime.supported(App)) {
+                if (model_provider.isDirect(provider_runtime.provider(app))) {
+                    try app.writeDomainNotice(.{
+                        .topic = "credits",
+                        .tone = .warning,
+                        .body = "Credits are a Vercel AI Gateway feature and are unavailable for direct providers.",
+                    }, true);
+                    return;
+                }
+            }
             var snapshot = app.creditsProvider().fetch(app.alloc, .{
                 .credential = app.auth.apiKey(),
                 .credential_source = if (comptime @hasDecl(@TypeOf(app.auth), "credentialSource"))

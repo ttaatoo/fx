@@ -9,6 +9,7 @@ const oauth_transport = @import("../auth/oauth_transport.zig");
 const input_appearance = @import("../config/input_appearance.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
 const model_provider = @import("../config/model_provider.zig");
+const direct_providers = @import("../config/direct_providers.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const record_tape = @import("../workspace/record_tape.zig");
 const workspace_access = @import("../workspace/workspace_access.zig");
@@ -321,21 +322,24 @@ pub fn loadStartupStatus(
     defer detailed.deinit(alloc);
     const settings = &detailed.settings;
 
-    const configured_selection = try configuredProviderSelection(default_model, settings);
-    const selected_model = try loadStartupStatusModel(alloc, configured_selection.model, null);
+    const resolved = try resolveStartupSelection(alloc, default_model, settings);
+    const selected_model = StartupStatusModel{
+        .value = resolved.selected_model,
+        .owned = resolved.selected_model,
+    };
     errdefer if (selected_model.owned) |model| alloc.free(model);
 
     var auth_status = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,
         secret_store,
-        configured_selection.provider,
+        resolved.provider,
         settings.credential_source,
     );
     errdefer auth_status.deinit(alloc);
 
     const result = StartupStatus{
         .workspace_root = workspace_root,
-        .provider = configured_selection.provider,
+        .provider = resolved.provider,
         .selected_model = selected_model.value,
         .owned_selected_model = selected_model.owned,
         .auth = auth_status,
@@ -401,11 +405,11 @@ fn loadStartupStateFromOwnedWorkspace(
         false,
     );
 
-    const configured_selection = try configuredProviderSelection(default_model, settings);
-    state.provider = configured_selection.provider;
-    state.configured_model = try alloc.dupe(u8, configured_selection.model);
+    const resolved = try resolveStartupSelection(alloc, default_model, settings);
+    state.provider = resolved.provider;
+    state.configured_model = try alloc.dupe(u8, resolved.configured.model);
     state.model_source = detailed.model_source orelse .compiled_default;
-    state.selected_model = try loadInitialModel(alloc, configured_selection.model, null);
+    state.selected_model = resolved.selected_model;
     if (hasProcessModelOverride()) state.model_source = .process_override;
     state.config_diagnostics = detailed.diagnostics;
     detailed.diagnostics = &.{};
@@ -1120,10 +1124,38 @@ fn configuredProviderSelection(
 ) !model_provider.ProviderSelection {
     const provider = settings.provider orelse .gateway;
     const model = switch (provider) {
-        .gateway => settings.model orelse default_model,
+        .gateway, .anthropic, .xai => settings.model orelse default_model,
         .codex => settings.codex_model orelse return error.CodexModelNotSelected,
     };
     return .{ .provider = provider, .model = model };
+}
+
+const ResolvedStartupSelection = struct {
+    configured: model_provider.ProviderSelection,
+    provider: model_provider.ProviderId,
+    selected_model: []u8,
+};
+
+fn resolveStartupSelection(
+    alloc: Allocator,
+    default_model: []const u8,
+    settings: *const config_runtime.Settings,
+) !ResolvedStartupSelection {
+    const configured = try configuredProviderSelection(default_model, settings);
+    var catalog = try direct_providers.loadFromHome(alloc);
+    defer catalog.deinit();
+    const process_model = initialModelId(default_model, configured.model);
+    const overlaid = direct_providers.overlayStartupSelection(
+        &catalog,
+        .{ .provider = configured.provider, .model = configured.model },
+        process_model,
+        settings.provider != null,
+    );
+    return .{
+        .configured = configured,
+        .provider = overlaid.provider,
+        .selected_model = try alloc.dupe(u8, overlaid.model),
+    };
 }
 
 fn initialModelId(default_model: []const u8, configured: ?[]const u8) []const u8 {
@@ -1156,6 +1188,43 @@ test "startup provider chooses only its provider-scoped model" {
         error.CodexModelNotSelected,
         configuredProviderSelection("default/model", &missing_codex),
     );
+
+    const anthropic_settings = config_runtime.Settings{
+        .model = @constCast("claude-opus-4-6"),
+        .provider = .anthropic,
+    };
+    const anthropic = try configuredProviderSelection("default/model", &anthropic_settings);
+    try std.testing.expectEqual(model_provider.ProviderId.anthropic, anthropic.provider);
+    try std.testing.expectEqualStrings("claude-opus-4-6", anthropic.model);
+}
+
+test "startup overlay selects a configured Anthropic model without a Gateway key" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    try writeFixtureFile(
+        tmp.dir,
+        "home/.fx/providers.json",
+        \\{"providers":{"anthropic":{"api":"anthropic-messages","apiKey":"$ANTHROPIC_API_KEY","models":[{"id":"claude-opus-4-6"}]}}}
+        ,
+    );
+    const home_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home_root);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+
+    var env = try TestEnv.install(alloc, &.{
+        .{ .key = "HOME", .value = home_root },
+        .{ .key = "ANTHROPIC_API_KEY", .value = "sk-ant-test" },
+    });
+    defer env.deinit();
+
+    var state = try loadStartupStateForWorkspace(alloc, workspace, "zai/glm-5.2", 25);
+    defer state.deinit(alloc);
+    try std.testing.expectEqual(model_provider.ProviderId.anthropic, state.provider);
+    try std.testing.expectEqualStrings("claude-opus-4-6", state.selected_model);
 }
 
 fn loadInitialModel(alloc: Allocator, default_model: []const u8, configured: ?[]const u8) ![]u8 {

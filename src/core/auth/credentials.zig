@@ -1,10 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const chatgpt_oauth = @import("chatgpt_oauth.zig");
+const grok_oauth = @import("grok_oauth.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host = @import("../hosts/host.zig");
 const io_mod = @import("../shared/io.zig");
 const model_provider = @import("../config/model_provider.zig");
+const direct_providers = @import("../config/direct_providers.zig");
 const oauth = @import("oauth.zig");
 const oauth_session = @import("oauth_session.zig");
 const oauth_transport = @import("oauth_transport.zig");
@@ -20,6 +22,7 @@ pub const CatalogPublicOnly = union(enum) {
     credential_refresh_failed: Source,
     authenticated_credential_rejected: Source,
     chatgpt_subscription,
+    grok_subscription,
 
     fn credentialSource(self: CatalogPublicOnly) ?Source {
         return switch (self) {
@@ -28,6 +31,7 @@ pub const CatalogPublicOnly = union(enum) {
             .credential_refresh_failed => |source| source,
             .authenticated_credential_rejected => |source| source,
             .chatgpt_subscription => .chatgpt_subscription,
+            .grok_subscription => .grok_subscription,
         };
     }
 };
@@ -40,6 +44,8 @@ pub const CatalogAuthenticatedSource = enum {
     fx_login,
     stored_key,
     chatgpt_subscription,
+    custom_provider,
+    grok_subscription,
 
     fn credentialSource(self: CatalogAuthenticatedSource) Source {
         return switch (self) {
@@ -48,6 +54,8 @@ pub const CatalogAuthenticatedSource = enum {
             .fx_login => .fx_login,
             .stored_key => .stored_key,
             .chatgpt_subscription => .chatgpt_subscription,
+            .custom_provider => .custom_provider,
+            .grok_subscription => .grok_subscription,
         };
     }
 };
@@ -85,7 +93,9 @@ pub const CatalogAccess = union(enum) {
     pub fn publicFallbackAfterRejection(self: CatalogAccess) ?CatalogAccess {
         return switch (self) {
             .public_only => null,
-            .authenticated => |access| if (access.source == .chatgpt_subscription)
+            .authenticated => |access| if (access.source == .chatgpt_subscription or
+                access.source == .custom_provider or
+                access.source == .grok_subscription)
                 null
             else
                 .{
@@ -143,6 +153,8 @@ pub fn catalogAccessForCredential(
         .ai_gateway_api_key => .ai_gateway_api_key,
         .stored_key => .stored_key,
         .chatgpt_subscription => .chatgpt_subscription,
+        .custom_provider => .custom_provider,
+        .grok_subscription => .grok_subscription,
         .fx_login => blk: {
             const team = team_context orelse
                 return .{ .public_only = .fx_login_team_required };
@@ -155,7 +167,9 @@ pub fn catalogAccessForCredential(
         .authenticated = .{
             .source = authenticated_source,
             .credential = credential,
-            .team_context = if (authenticated_source == .chatgpt_subscription) null else team_context,
+            .team_context = if (authenticated_source == .chatgpt_subscription or
+                authenticated_source == .custom_provider or
+                authenticated_source == .grok_subscription) null else team_context,
         },
     };
 }
@@ -174,7 +188,34 @@ pub const missing_credential_message = "Fx needs access to Vercel AI Gateway. Ru
 pub const missing_interactive_credential_message = "Fx needs access to Vercel AI Gateway. Run /login to sign in, /setup to use an API key, or set AI_GATEWAY_API_KEY.";
 pub const missing_chatgpt_credential_message = "fx needs a Codex subscription login for this model. Run fx login codex.";
 pub const missing_chatgpt_interactive_credential_message = "Codex needs a subscription login. Run /login and choose Sign in with Codex.";
+pub const missing_direct_credential_message = "This model uses a direct provider. Set its apiKey in ~/.fx/providers.json or ANTHROPIC_API_KEY.";
+pub const missing_direct_interactive_credential_message = "This model uses a direct provider. Set its apiKey in ~/.fx/providers.json or ANTHROPIC_API_KEY.";
+pub const missing_grok_credential_message = "This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.";
+pub const missing_grok_interactive_credential_message = "SuperGrok needs a subscription login. Run /login and choose Sign in with SuperGrok.";
 pub const unreadable_store_message = "Fx could not read the stored API key from " ++ stored_key_backend_label ++ ". A key may be saved but unreadable. Set FX_TRACE_LOG for the failing step, or set AI_GATEWAY_API_KEY.";
+
+pub const MissingSurface = enum { cli, interactive };
+
+pub fn missingCredentialMessage(provider: model_provider.ProviderId, surface: MissingSurface) []const u8 {
+    return switch (provider) {
+        .codex => switch (surface) {
+            .cli => missing_chatgpt_credential_message,
+            .interactive => missing_chatgpt_interactive_credential_message,
+        },
+        .anthropic => switch (surface) {
+            .cli => missing_direct_credential_message,
+            .interactive => missing_direct_interactive_credential_message,
+        },
+        .xai => switch (surface) {
+            .cli => missing_grok_credential_message,
+            .interactive => missing_grok_interactive_credential_message,
+        },
+        .gateway => switch (surface) {
+            .cli => missing_credential_message,
+            .interactive => missing_interactive_credential_message,
+        },
+    };
+}
 
 pub const Credential = struct {
     token: []u8,
@@ -244,12 +285,22 @@ pub fn resolveForProvider(
         };
         return .{ .credential = credential };
     }
+    if (provider == .xai) {
+        const credential = switch (mode) {
+            .stored => try loadStoredGrokCredential(alloc),
+            .refresh_if_needed => try loadGrokCredential(alloc, transport, .if_needed),
+        };
+        return .{ .credential = credential };
+    }
+    if (provider == .anthropic) {
+        return .{ .credential = try loadDirectProviderCredential(alloc, provider) };
+    }
     return resolvePreferring(
         alloc,
         transport,
         secret_store,
         mode,
-        if (preferred == .chatgpt_subscription) null else preferred,
+        if (preferred == .chatgpt_subscription or preferred == .grok_subscription) null else preferred,
     );
 }
 
@@ -317,6 +368,11 @@ fn loadPreferredSource(
             .stored => loadStoredChatGptCredential(alloc),
             .refresh_if_needed => loadChatGptCredential(alloc, transport, .if_needed),
         },
+        .grok_subscription => switch (mode) {
+            .stored => loadStoredGrokCredential(alloc),
+            .refresh_if_needed => loadGrokCredential(alloc, transport, .if_needed),
+        },
+        .custom_provider => loadFirstDirectProviderCredential(alloc),
         else => loadSource(alloc, transport, secret_store, source),
     };
 }
@@ -333,6 +389,8 @@ pub fn loadSource(
         .fx_login => loadFxLoginCredential(alloc, transport),
         .stored_key => loadStoredKeyCredential(alloc, secret_store),
         .chatgpt_subscription => loadChatGptCredential(alloc, transport, .if_needed),
+        .grok_subscription => loadGrokCredential(alloc, transport, .if_needed),
+        .custom_provider => loadFirstDirectProviderCredential(alloc),
     };
 }
 
@@ -357,6 +415,8 @@ pub fn sourceExists(
             break :blk true;
         },
         .chatgpt_subscription => chatgpt_oauth.sourceExists(alloc),
+        .grok_subscription => grok_oauth.sourceExists(alloc),
+        .custom_provider => directProviderSourceExists(alloc),
         .stored_key => blk: {
             if (secret_store.isDisabled()) break :blk false;
             const stored = secret_store.load(alloc) catch |err| switch (err) {
@@ -415,6 +475,61 @@ fn loadChatGptCredential(
 
 fn loadStoredChatGptCredential(alloc: std.mem.Allocator) !?Credential {
     return loadChatGptCredential(alloc, oauth_transport.unavailable_provider, .stored);
+}
+
+fn loadGrokCredential(
+    alloc: std.mem.Allocator,
+    transport: oauth_transport.Provider,
+    mode: grok_oauth.RefreshMode,
+) !?Credential {
+    var access = (try grok_oauth.loadAccess(alloc, transport, mode)) orelse return null;
+    defer access.deinit(alloc);
+    const token = access.access_token;
+    access.access_token = &.{};
+    return .{
+        .token = token,
+        .source = .grok_subscription,
+        .refresh_after_ms = access.refresh_after_ms,
+    };
+}
+
+fn loadStoredGrokCredential(alloc: std.mem.Allocator) !?Credential {
+    return loadGrokCredential(alloc, oauth_transport.unavailable_provider, .stored);
+}
+
+pub fn refreshGrokCredential(
+    alloc: std.mem.Allocator,
+    transport: oauth_transport.Provider,
+) !?Credential {
+    return loadGrokCredential(alloc, transport, .force);
+}
+
+fn loadDirectProviderCredential(alloc: std.mem.Allocator, provider: model_provider.ProviderId) !?Credential {
+    var catalog = try direct_providers.loadFromHome(alloc);
+    defer catalog.deinit();
+    const entry = catalog.findByProvider(provider) orelse return null;
+    const key = entry.resolvedApiKey() orelse return null;
+    return .{
+        .token = try alloc.dupe(u8, key),
+        .source = .custom_provider,
+    };
+}
+
+fn loadFirstDirectProviderCredential(alloc: std.mem.Allocator) !?Credential {
+    var catalog = try direct_providers.loadFromHome(alloc);
+    defer catalog.deinit();
+    const hit = catalog.firstApiKeyUsable() orelse return null;
+    const key = hit.provider.resolvedApiKey() orelse return null;
+    return .{
+        .token = try alloc.dupe(u8, key),
+        .source = .custom_provider,
+    };
+}
+
+fn directProviderSourceExists(alloc: std.mem.Allocator) bool {
+    var catalog = direct_providers.loadFromHome(alloc) catch return false;
+    defer catalog.deinit();
+    return catalog.hasUsableKey();
 }
 
 fn nonEmptyEnvValue(name: []const u8) ?[]const u8 {
@@ -552,11 +667,13 @@ pub fn sourceLabel(source: Source) []const u8 {
         .fx_login => "fx login",
         .stored_key => "stored API key (" ++ stored_key_backend_label ++ ")",
         .chatgpt_subscription => "Codex subscription",
+        .custom_provider => "direct provider API key",
+        .grok_subscription => "SuperGrok subscription",
     };
 }
 
 pub fn sourceRefreshable(source: Source) bool {
-    return source == .fx_login or source == .chatgpt_subscription;
+    return source == .fx_login or source == .chatgpt_subscription or source == .grok_subscription;
 }
 
 test "stored key label discloses the backend that answered" {

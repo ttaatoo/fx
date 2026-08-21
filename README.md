@@ -42,6 +42,8 @@ fx
 
 Inside fx, `/provider` switches between Gateway and Codex, and `/model` lists the active provider's fetched models. Codex model IDs are the raw IDs returned by its authenticated catalog. Use `/logout codex` to remove the Codex session without affecting Vercel access.
 
+This fork can also use Anthropic Messages (`ANTHROPIC_API_KEY`) and SuperGrok / X Premium+ OAuth without Vercel AI Gateway. SuperGrok is a subscriber login (`fx login grok`), not an `XAI_API_KEY`. That path is a fork experiment. See [Direct LLM providers](docs/direct-providers.md) for Anthropic config, Claude Code proxy examples, and SuperGrok login plus quota notes.
+
 The OpenAI Codex route uses ChatGPT subscription access directly and never sends its OAuth token to Vercel AI Gateway. The session is stored privately at `~/.fx/chatgpt-auth.json` and refreshed when needed. On supported Codex models, `/fast` requests OpenAI's priority service tier and consumes ChatGPT credits at the higher Fast mode rate.
 
 To use an AI Gateway API key instead:

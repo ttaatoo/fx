@@ -412,7 +412,7 @@ pub const StatusSnapshot = struct {
         defer out.deinit();
 
         try out.writer.print("[status] model={s}\n", .{self.model});
-        if (self.provider == .codex) {
+        if (self.provider != .gateway) {
             try out.writer.print("[status] model_source={s}\n", .{model_provider.label(self.provider)});
         }
         try out.writer.print("[status] update_channel={s}\n", .{self.update_channel});
@@ -451,7 +451,7 @@ pub const StatusSnapshot = struct {
         defer out.deinit();
 
         try out.writer.print("model={s}\n", .{self.model});
-        if (self.provider == .codex) {
+        if (self.provider != .gateway) {
             try out.writer.print("model_source={s}\n", .{model_provider.label(self.provider)});
         }
         try out.writer.print("update_channel={s}\n", .{self.update_channel});
@@ -489,7 +489,7 @@ pub const StatusSnapshot = struct {
     pub fn writeJson(self: StatusSnapshot, writer: *std.Io.Writer) !void {
         try writer.writeAll("{\"kind\":\"status\",\"model\":");
         try std.json.Stringify.value(self.model, .{}, writer);
-        if (self.provider == .codex) {
+        if (self.provider != .gateway) {
             try writer.writeAll(",\"model_source\":");
             try std.json.Stringify.value(model_provider.label(self.provider), .{}, writer);
         }
@@ -666,7 +666,7 @@ pub const ModelListSnapshot = struct {
 
         const shown = self.shownCount();
         for (self.ids[0..shown]) |id| {
-            if (self.provider == .codex) {
+            if (self.provider != .gateway) {
                 try out.writer.print(" - {s} · {s}\n", .{ id, model_provider.label(self.provider) });
             } else {
                 try out.writer.print(" - {s}\n", .{id});
@@ -694,7 +694,7 @@ pub const ModelListSnapshot = struct {
         try out.writer.print("{d} available", .{self.ids.len});
         const shown = self.shownCount();
         for (self.ids[0..shown]) |id| {
-            if (self.provider == .codex) {
+            if (self.provider != .gateway) {
                 try out.writer.print("\n - {s} · {s}", .{ id, model_provider.label(self.provider) });
             } else {
                 try out.writer.print("\n - {s}", .{id});
@@ -718,7 +718,7 @@ pub const ModelListSnapshot = struct {
             if (i > 0) try out.writer.writeByte(',');
             try std.json.Stringify.value(id, .{}, &out.writer);
         }
-        if (self.provider == .codex) {
+        if (self.provider != .gateway) {
             try out.writer.writeAll("],\"models\":[");
             for (self.ids[0..shown], 0..) |id, i| {
                 if (i > 0) try out.writer.writeByte(',');
@@ -740,7 +740,7 @@ pub const ModelListSnapshot = struct {
     fn emptyCatalogProviderName(self: ModelListSnapshot) []const u8 {
         return switch (self.provider) {
             .gateway => "gateway",
-            .codex => model_provider.label(.codex),
+            .codex, .anthropic, .xai => model_provider.label(self.provider),
         };
     }
 
@@ -754,6 +754,7 @@ pub const ModelListSnapshot = struct {
             .credential_refresh_failed => "Vercel sign-in refresh failed; using the public model catalog.",
             .authenticated_credential_rejected => "Your Gateway credential was rejected; using the public model catalog.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
+            .grok_subscription => "SuperGrok models require an authenticated SuperGrok session.",
         };
     }
 };
@@ -1217,7 +1218,7 @@ pub const DoctorSnapshot = struct {
         );
         try out.writer.print("[doctor] workspace={s}\n", .{self.workspace_root});
         try out.writer.print("[doctor] model={s}\n", .{self.model});
-        if (self.provider == .codex) {
+        if (self.provider != .gateway) {
             try out.writer.print("[doctor] model_source={s}\n", .{model_provider.label(self.provider)});
         }
         try out.writer.print("[doctor] auth={s}\n", .{self.auth.activeSourceLabel()});
@@ -1254,7 +1255,7 @@ pub const DoctorSnapshot = struct {
         try std.json.Stringify.value(self.workspace_root, .{}, writer);
         try writer.writeAll(",\"model\":");
         try std.json.Stringify.value(self.model, .{}, writer);
-        if (self.provider == .codex) {
+        if (self.provider != .gateway) {
             try writer.writeAll(",\"model_source\":");
             try std.json.Stringify.value(model_provider.label(self.provider), .{}, writer);
         }
@@ -2021,6 +2022,53 @@ test "status distinguishes the selected model route from connected providers" {
     defer std.testing.allocator.free(json);
     try std.testing.expect(std.mem.find(u8, json, "\"model_source\":\"Codex subscription\"") != null);
     try std.testing.expect(std.mem.find(u8, json, "\"connected_providers\":[\"vercel-ai-gateway\",\"codex\"]") != null);
+}
+
+test "status names a direct provider model source" {
+    const snapshot = StatusSnapshot{
+        .model = "claude-opus-4-6",
+        .provider = .anthropic,
+        .auth = .{
+            .active_source = .custom_provider,
+        },
+        .permission_mode = .auto,
+        .workspace_root = "/tmp/fx",
+        .history_turns = 0,
+        .session_permission_grants = 0,
+        .agent_step_limit = 24,
+    };
+    const text = try snapshot.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "model_source=Anthropic Messages") != null);
+    try std.testing.expect(std.mem.find(u8, text, "auth=direct provider API key") != null);
+
+    const json = try snapshot.renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"model_source\":\"Anthropic Messages\"") != null);
+}
+
+test "status names a SuperGrok subscription model source" {
+    const snapshot = StatusSnapshot{
+        .model = "grok-4.6",
+        .provider = .xai,
+        .auth = .{
+            .active_source = .grok_subscription,
+        },
+        .permission_mode = .auto,
+        .workspace_root = "/tmp/fx",
+        .history_turns = 0,
+        .session_permission_grants = 0,
+        .agent_step_limit = 24,
+    };
+    const text = try snapshot.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "model_source=SuperGrok") != null);
+    try std.testing.expect(std.mem.find(u8, text, "auth=SuperGrok subscription") != null);
+
+    const json = try snapshot.renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"model_source\":\"SuperGrok\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"auth\":\"SuperGrok subscription\"") != null);
 }
 
 test "MCP config diagnostic renders in status text and JSON but not interactive body" {

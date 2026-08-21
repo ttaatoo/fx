@@ -345,6 +345,7 @@ fn loadedCatalogStatusText(state: model_cache_runtime.ModelMenuCatalogState) ?[]
             .credential_refresh_failed => "Vercel sign-in refresh failed; using the public model catalog.",
             .authenticated_credential_rejected => "Your Gateway credential was rejected; using the public model catalog.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
+            .grok_subscription => "SuperGrok models require an authenticated SuperGrok session.",
         };
     }
     if (state.access_level == .authenticated) {
@@ -355,6 +356,8 @@ fn loadedCatalogStatusText(state: model_cache_runtime.ModelMenuCatalogState) ?[]
             .vercel_oidc_token => "Gateway catalog: authenticated with the Vercel session.",
             .stored_key => "Gateway catalog: authenticated with the stored API key.",
             .chatgpt_subscription => "Codex catalog: authenticated with a subscription.",
+            .custom_provider => "Direct provider catalog: using ~/.fx/providers.json.",
+            .grok_subscription => "SuperGrok catalog: authenticated with a subscription.",
         };
     }
     return null;
