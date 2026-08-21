@@ -66,18 +66,15 @@ pub const Command = union(enum) {
     issue: []const [:0]const u8,
     login: []const [:0]const u8,
     logout: []const [:0]const u8,
-    setup: []const [:0]const u8,
     status: []const [:0]const u8,
     permissions: []const [:0]const u8,
     models: []const [:0]const u8,
     provider: []const [:0]const u8,
     doctor: []const [:0]const u8,
     background: []const [:0]const u8,
-    teams: []const [:0]const u8,
     session: []const [:0]const u8,
     sessions: []const [:0]const u8,
     resume_session: ResumeInvocation,
-    credits: []const [:0]const u8,
     usage: []const [:0]const u8,
     upgrade: []const [:0]const u8,
     replay: []const [:0]const u8,
@@ -215,7 +212,6 @@ const LocalSurfaceOptions = struct {
 fn parseLoginProvider(rest: []const [:0]const u8) !?provider_catalog.Id {
     if (rest.len == 0) return null;
     if (rest.len != 1) return error.InvalidLoginProviderArgs;
-    if (provider_catalog.isRetiredLoginName(rest[0])) return error.RetiredGatewayLogin;
     return provider_catalog.parse(rest[0]) orelse error.InvalidLoginProviderArgs;
 }
 
@@ -485,10 +481,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
         },
         'b' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .background)) return .{ .background = args[1..] };
-            if (command_specs.matchesTopLevel(command_catalog, command, .credits)) return .{ .credits = args[1..] };
-        },
-        'c' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .credits)) return .{ .credits = args[1..] };
         },
         'd' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .doctor)) return .{ .doctor = args[1..] };
@@ -513,7 +505,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
             if (command_specs.matchesTopLevel(command_catalog, command, .replay)) return .{ .replay = args[1..] };
         },
         's' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .setup)) return .{ .setup = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .status)) return .{ .status = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .sessions)) return .{ .sessions = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .session)) {
@@ -522,9 +513,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
                 }
                 return .{ .session = args[1..] };
             }
-        },
-        't' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .teams)) return .{ .teams = args[1..] };
         },
         'u' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .usage)) return .{ .usage = args[1..] };
@@ -778,11 +766,7 @@ fn runNonInteractiveWithDeps(
         .pr => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .pull_request),
         .issue => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .issue),
         .login => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch |err| {
-                if (err == error.RetiredGatewayLogin) {
-                    try writeStderr(deps, "fx login: Vercel AI Gateway is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
-                    return .handled_failure;
-                }
+            const maybe_login_provider = parseLoginProvider(rest) catch {
                 try writeStderr(deps, "usage: fx login [grok|codex]\n");
                 return .handled_failure;
             };
@@ -819,11 +803,7 @@ fn runNonInteractiveWithDeps(
             return .handled_success;
         },
         .logout => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch |err| {
-                if (err == error.RetiredGatewayLogin) {
-                    try writeStderr(deps, "fx logout: Vercel AI Gateway is not supported. Use fx logout grok or fx logout codex.\n");
-                    return .handled_failure;
-                }
+            const maybe_login_provider = parseLoginProvider(rest) catch {
                 try writeStderr(deps, "usage: fx logout [grok|codex]\n");
                 return .handled_failure;
             };
@@ -872,12 +852,7 @@ fn runNonInteractiveWithDeps(
                     },
                 };
             }
-            try writeStderr(deps, "fx logout: Vercel AI Gateway is not supported. Use fx logout grok or fx logout codex.\n");
-            return .handled_failure;
-        },
-        .teams => |rest| {
-            _ = rest;
-            try writeStderr(deps, "fx teams: Vercel teams are not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+            try writeStderr(deps, "usage: fx logout [grok|codex]\n");
             return .handled_failure;
         },
         .provider => |rest| {
@@ -1005,14 +980,6 @@ fn runNonInteractiveWithDeps(
                 .xai => "Provider set to SuperGrok.\n",
             });
             return .handled_success;
-        },
-        .setup => |rest| {
-            if (rest.len > 0) {
-                try writeTopLevelUsage(cfg.command_catalog, deps, .setup);
-                return .handled_failure;
-            }
-            try writeStderr(deps, "fx setup: AI Gateway API keys are not supported. Run fx login grok, or set ANTHROPIC_API_KEY in ~/.fx/providers.json.\n");
-            return .handled_failure;
         },
         .status => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
@@ -1478,30 +1445,6 @@ fn runNonInteractiveWithDeps(
                     return .handled_failure;
                 },
             }
-        },
-        .credits => |rest| {
-            const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .credits, "credits", err, rest);
-                return .handled_failure;
-            };
-            var startup = try deps.load_startup_state(
-                alloc,
-                cfg.gateway_provider.oauth_transport,
-                cfg.secret_store,
-                cfg.default_model,
-                cfg.default_agent_step_limit,
-            );
-            defer startup.deinit(alloc);
-            try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
-            const message = "credits are not available; this fork uses SuperGrok or Anthropic instead of Vercel AI Gateway";
-            if (opts.format == .json) {
-                try writeJsonCommandFailureCode(alloc, deps, "credits", "Unavailable", message);
-            } else {
-                try writeStderr(deps, "fx credits: ");
-                try writeStderr(deps, message);
-                try writeStderr(deps, "\n");
-            }
-            return .handled_failure;
         },
         .usage => |rest| {
             const opts = parseUsageArgs(rest) catch |err| {
@@ -3348,7 +3291,7 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{@constCast("setup")})) {
-        .setup => |rest| try std.testing.expectEqual(@as(usize, 0), rest.len),
+        .unknown => |value| try std.testing.expectEqualStrings("setup", value),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{ @constCast("status"), @constCast("--json") })) {
@@ -3388,7 +3331,15 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{ @constCast("credits"), @constCast("--json") })) {
-        .credits => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
+        .unknown => |value| try std.testing.expectEqualStrings("credits", value),
+        else => return error.TestExpectedEqual,
+    }
+    switch (parse(command_catalog, &.{@constCast("teams")})) {
+        .unknown => |value| try std.testing.expectEqualStrings("teams", value),
+        else => return error.TestExpectedEqual,
+    }
+    switch (parse(command_catalog, &.{@constCast("balance")})) {
+        .unknown => |value| try std.testing.expectEqualStrings("balance", value),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{ @constCast("usage"), @constCast("--period"), @constCast("24h") })) {
@@ -4127,24 +4078,26 @@ test "runIfRequested version flags reject extra args" {
     }
 }
 
-test "setup rejects Gateway API-key onboarding" {
+test "setup is an unknown command" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
     var cfg = testConfig();
     cfg.secret_store = capture.secretStore();
 
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
+    try std.testing.expectError(
+        error.UnknownCliCommand,
+        runIfRequestedWithDeps(
+            std.testing.allocator,
+            &.{@constCast("setup")},
+            cfg,
+            capture.deps(),
+        ),
     );
-
-    try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqual(@as(usize, 0), capture.setup_store_calls);
     try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "AI Gateway API keys are not supported") != null);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fx login grok") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "unknown subcommand: setup") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel") == null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "AI Gateway") == null);
 }
 
 test "workspace indeterminate errors report the reconciled durable state" {
@@ -4337,15 +4290,15 @@ test "CLI surface uses the supplied command catalog for parsing usage and help" 
             .summary = "Show injected help",
         },
         .{
-            .kind = .setup,
+            .kind = .status,
             .token = "start",
             .usage = "start",
-            .summary = "Run injected setup",
+            .summary = "Run injected status",
         },
     };
     const help_groups = [_]command_specs.TopLevelHelpGroup{
         .{ .entries = &.{
-            .{ .kind = .setup, .usage = "start" },
+            .{ .kind = .status, .usage = "start" },
             .{ .kind = .help, .usage = "guide" },
         } },
     };
@@ -4358,7 +4311,7 @@ test "CLI surface uses the supplied command catalog for parsing usage and help" 
 
     try std.testing.expectEqual(Command.help, parse(command_catalog, &.{@constCast("-?")}));
     switch (parse(command_catalog, &.{@constCast("start")})) {
-        .setup => {},
+        .status => {},
         else => return error.TestExpectedEqual,
     }
 
@@ -4694,7 +4647,7 @@ test "runIfRequested models lists configured providers as json" {
     try std.testing.expectEqualStrings("", capture.stderr.written());
 }
 
-test "runIfRequested login vercel is rejected" {
+test "runIfRequested login vercel is an unknown login name" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
 
@@ -4705,42 +4658,40 @@ test "runIfRequested login vercel is rejected" {
         capture.deps(),
     );
     try std.testing.expectEqual(RunResult.handled_failure, result);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel AI Gateway is not supported") != null);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fx login grok") != null);
+    try std.testing.expectEqualStrings("usage: fx login [grok|codex]\n", capture.stderr.written());
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "vercel.com") == null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel") == null);
 }
 
-test "runIfRequested credits is unavailable without calling Gateway" {
-    var text_capture = CaptureOutput.init(std.testing.allocator);
-    defer text_capture.deinit();
-    const text_cfg = testConfig();
-    var text_deps = text_capture.deps();
-    text_deps.load_startup_state = stubLoadStartupState;
-
-    const text_result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("credits")},
-        text_cfg,
-        text_deps,
+test "runIfRequested credits and teams are unknown commands" {
+    var credits_capture = CaptureOutput.init(std.testing.allocator);
+    defer credits_capture.deinit();
+    try std.testing.expectError(
+        error.UnknownCliCommand,
+        runIfRequestedWithDeps(
+            std.testing.allocator,
+            &.{@constCast("credits")},
+            testConfig(),
+            credits_capture.deps(),
+        ),
     );
-    try std.testing.expectEqual(RunResult.handled_failure, text_result);
-    try std.testing.expectEqualStrings("", text_capture.stdout.written());
-    try std.testing.expect(std.mem.find(u8, text_capture.stderr.written(), "credits are not available") != null);
+    try std.testing.expect(std.mem.find(u8, credits_capture.stderr.written(), "unknown subcommand: credits") != null);
+    try std.testing.expect(std.mem.find(u8, credits_capture.stderr.written(), "Vercel") == null);
+    try std.testing.expect(std.mem.find(u8, credits_capture.stderr.written(), "Gateway") == null);
 
-    var json_capture = CaptureOutput.init(std.testing.allocator);
-    defer json_capture.deinit();
-    const json_cfg = testConfig();
-    var json_deps = json_capture.deps();
-    json_deps.load_startup_state = stubLoadStartupState;
-
-    const json_result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("credits"), @constCast("--json") },
-        json_cfg,
-        json_deps,
+    var teams_capture = CaptureOutput.init(std.testing.allocator);
+    defer teams_capture.deinit();
+    try std.testing.expectError(
+        error.UnknownCliCommand,
+        runIfRequestedWithDeps(
+            std.testing.allocator,
+            &.{@constCast("teams")},
+            testConfig(),
+            teams_capture.deps(),
+        ),
     );
-    try std.testing.expectEqual(RunResult.handled_failure, json_result);
-    try std.testing.expect(std.mem.find(u8, json_capture.stdout.written(), "\"code\":\"Unavailable\"") != null);
-    try std.testing.expectEqualStrings("", json_capture.stderr.written());
+    try std.testing.expect(std.mem.find(u8, teams_capture.stderr.written(), "unknown subcommand: teams") != null);
+    try std.testing.expect(std.mem.find(u8, teams_capture.stderr.written(), "Vercel") == null);
 }
 
 test "runIfRequested local json success appends exactly one newline" {

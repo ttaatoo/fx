@@ -99,12 +99,6 @@ pub const top_level_specs = [_]TopLevelSpec{
         .summary = "Sign out of SuperGrok or Codex",
     },
     .{
-        .kind = .setup,
-        .token = "setup",
-        .usage = "setup",
-        .summary = "Show how to sign in with SuperGrok or configure Anthropic",
-    },
-    .{
         .kind = .status,
         .token = "status",
         .usage = "status [--json]",
@@ -162,12 +156,6 @@ pub const top_level_specs = [_]TopLevelSpec{
         },
     },
     .{
-        .kind = .teams,
-        .token = "teams",
-        .usage = "teams",
-        .summary = "Removed: Vercel teams are not used on this fork",
-    },
-    .{
         .kind = .session,
         .token = "session",
         .usage = "session <last|id>|--id <id> [--json] | session resume [last|<id>] [--record] | session resume --id <id> [--record] | session migrate <id>|--id <id> [--allow-large] [--json] | session recover <id>|--id <id> [--json]",
@@ -208,14 +196,6 @@ pub const top_level_specs = [_]TopLevelSpec{
             .{ .flag = "--id <id>", .description = "Resume a session by exact id" },
             .{ .flag = "--record", .description = "Capture visible terminal content while running" },
         },
-    },
-    .{
-        .kind = .credits,
-        .token = "credits",
-        .aliases = &.{"balance"},
-        .usage = "credits [--json]",
-        .summary = "Removed: Gateway credits are not used on this fork",
-        .options = &.{json_option},
     },
     .{
         .kind = .usage,
@@ -295,9 +275,6 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
         .{ .kind = .login, .usage = "login [grok|codex]" },
         .{ .kind = .logout, .usage = "logout [grok|codex]" },
         .{ .kind = .provider, .usage = "provider <xai|anthropic|codex>" },
-        .{ .kind = .setup, .usage = "setup" },
-        .{ .kind = .teams, .usage = "teams" },
-        .{ .kind = .credits, .usage = "credits|balance" },
         .{ .kind = .usage, .usage = "usage [--period <24h|7d|30d>]" },
     } },
     .{ .entries = &.{
@@ -421,7 +398,6 @@ pub const slash_specs = [_]SlashSpec{
     .{ .kind = .rename_session, .command = "/rename", .help_entry = "/rename <title>", .completion_description = "rename the current session", .presentation_category = .session, .has_args = true, .accepts_payload = true },
     .{ .kind = .login, .command = "/login", .help_entry = "/login", .completion_description = "sign in with SuperGrok or Codex", .presentation_category = .account },
     .{ .kind = .logout, .command = "/logout", .help_entry = "/logout [grok|codex]", .completion_description = "sign out of SuperGrok or Codex", .presentation_category = .account, .has_args = true, .accepts_payload = true },
-    .{ .kind = .setup, .command = "/setup", .help_entry = "/setup", .completion_description = "show SuperGrok and Anthropic setup", .presentation_category = .account },
     .{ .kind = .stats, .command = "/stats", .help_entry = "/stats", .completion_description = "show token and turn statistics", .presentation_category = .account },
     .{ .kind = .usage, .command = "/usage", .aliases = &.{"/cost"}, .help_entry = "/usage (/cost)", .completion_description = "show local fx tokens, models, and spend", .presentation_category = .account },
     .{ .kind = .status, .command = "/status", .help_entry = "/status", .completion_description = "show runtime configuration", .presentation_category = .general, .show_in_welcome = true },
@@ -445,7 +421,6 @@ pub const slash_specs = [_]SlashSpec{
     .{ .kind = .compact, .command = "/compact", .help_entry = "/compact", .completion_description = "compact older conversation turns", .presentation_category = .session },
     .{ .kind = .settings, .command = "/settings", .help_entry = "/settings [startup-scrollback [on|off]]", .completion_description = "browse and update settings", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
     .{ .kind = .alias, .command = "/alias", .aliases = &.{}, .help_entry = "/alias [name] [command]", .completion_description = "show alias availability", .presentation_category = .extensions, .has_args = true, .accepts_payload = true },
-    .{ .kind = .credits, .command = "/credits", .aliases = &.{"/balance"}, .help_entry = "/credits (/balance)", .completion_description = "credits are not used on this fork", .presentation_category = .account, .requires_prompt_credential = true },
     .{ .kind = .paste, .command = "/paste", .help_entry = "/paste", .completion_description = "attach an image from the clipboard when supported", .presentation_category = .media },
     .{ .kind = .fast, .command = "/fast", .help_entry = "/fast", .completion_description = "toggle Fast mode when supported", .presentation_category = .model },
     .{ .kind = .appearance, .command = "/appearance", .aliases = &.{ "/input", "/maxxing" }, .show_aliases_in_completion = false, .help_entry = "/appearance [input lines|tint|presentation normal|minimal]", .completion_description = "choose input and transcript presentation", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
@@ -529,7 +504,6 @@ test "built-in slash commands register exact active order" {
         "/rename",
         "/login",
         "/logout",
-        "/setup",
         "/stats",
         "/usage",
         "/status",
@@ -553,7 +527,6 @@ test "built-in slash commands register exact active order" {
         "/compact",
         "/settings",
         "/alias",
-        "/credits",
         "/paste",
         "/fast",
         "/appearance",
@@ -585,8 +558,8 @@ test "built-in slash registry resolves primary commands and aliases" {
     const model = command_specs.matchedSlashPrefix(slash_registry, "/model\tmodel-id", .model) orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("/model", model);
 
-    const credits = slash_registry.lookup("/credits") orelse return error.TestExpectedEqual;
-    try std.testing.expect(credits.requires_prompt_credential);
+    try std.testing.expect(slash_registry.lookup("/credits") == null);
+    try std.testing.expect(slash_registry.lookup("/setup") == null);
 
     for ([_][]const u8{ "/model", "/models" }) |command| {
         const catalog_command = slash_registry.lookup(command) orelse return error.TestExpectedEqual;

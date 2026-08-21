@@ -543,7 +543,7 @@ pub fn runLogin(
     _ = alloc;
     _ = transport;
     _ = url_opener;
-    try writeStdout("Vercel AI Gateway is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+    try writeStdout("Use fx login grok or fx login codex.\n");
     return error.RetiredGatewayLogin;
 }
 
@@ -595,15 +595,10 @@ pub fn runTeams(
     alloc: Allocator,
     transport: oauth_transport.Provider,
 ) !void {
-    var selection = try loadTeamSelection(alloc, transport);
-    defer selection.deinit(alloc);
-
-    const selected_index = (try selectTeam(alloc, selection.teams.items, selection.currentTeam())) orelse
-        return LoginError.NoTeams;
-    const selected = selection.teams.items[selected_index];
-    var changed_team = try selection.select(alloc, selected_index);
-    defer changed_team.deinit(alloc);
-    try writeStdoutFmt("Selected team: {s} ({s}).\n", .{ selected.name, selected.slug });
+    _ = alloc;
+    _ = transport;
+    try writeStdout("Team switching is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+    return error.NoTeams;
 }
 
 pub fn loadTeamSelection(

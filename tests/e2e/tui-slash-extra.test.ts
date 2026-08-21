@@ -347,12 +347,13 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   );
 
   test(
-    "/credits is unavailable without Vercel Gateway",
+    "/credits is not a product command",
     async () => {
       session = await launchAndWait();
       await session.sendText("/credits");
-      const pane = await session.waitForText("Credits are not available", 10_000);
-      expect(pane).toContain("SuperGrok");
+      const pane = await session.waitForText("Unknown command. Try /help.", 10_000);
+      expect(pane).not.toContain("Vercel");
+      expect(pane).not.toContain("Gateway");
     },
     TIMEOUT,
   );

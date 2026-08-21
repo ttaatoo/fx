@@ -130,7 +130,9 @@ pub fn Runtime(comptime App: type) type {
                 return;
             }
             if (comptime host_target.is_wasm) {
-                try beginSignIn(app, false);
+                try app.auth.refreshSourceInventory(app.alloc);
+                app.auth.openPicker(app.alloc);
+                app.shell.render_requests.request(.footer);
                 return;
             }
             try app.auth.refreshSourceInventory(app.alloc);
@@ -342,22 +344,23 @@ pub fn Runtime(comptime App: type) type {
                 .provider => |provider| try switchProvider(app, provider, true),
                 .source => |source| try applySourceChoice(app, source),
                 .action => |action| switch (action) {
-                    .login => try beginSignIn(app, true),
+                    .login => try writeAuthNotice(app, .{
+                        .topic = "auth",
+                        .tone = .warning,
+                        .body = "Use SuperGrok or Codex. Run /login and choose Sign in with SuperGrok or Sign in with Codex.",
+                    }),
                     .chatgpt_login => try beginChatGptSignIn(app),
                     .grok_login => try beginGrokSignIn(app),
-                    .setup => {
-                        if (comptime !runtime_profile.allows(App, .native_auth)) {
-                            try app.writeDomainNotice(.{
-                                .topic = "auth",
-                                .tone = .warning,
-                                .body = "API key setup is unavailable in this WASM session.",
-                            }, true);
-                            return;
-                        }
-                        prepareApiKeyInputBoundary(app);
-                        app.auth.openApiKeyPickerFromRoot(app.alloc);
-                    },
-                    .change_team => try beginTeamPicker(app),
+                    .setup => try writeAuthNotice(app, .{
+                        .topic = "auth",
+                        .tone = .warning,
+                        .body = "Use SuperGrok or Anthropic. Run /login and choose Sign in with SuperGrok, or set ANTHROPIC_API_KEY.",
+                    }),
+                    .change_team => try writeAuthNotice(app, .{
+                        .topic = "auth",
+                        .tone = .warning,
+                        .body = "Team switching is not supported. Run /login and choose SuperGrok or Codex.",
+                    }),
                     .switch_credential => app.auth.openSwitchCredentialPicker(app.alloc),
                     .automatic => try applyAutomaticCredential(app),
                 },
@@ -965,25 +968,11 @@ pub fn Runtime(comptime App: type) type {
         }
 
         fn beginTeamPicker(app: *App) !void {
-            if (!app.auth.pickerView().fx_login_session_available) return;
-            try app.flushBeforeBlockingExternalWork();
-
-            var selection = login_flow.loadTeamSelection(app.alloc, app.auth.oauthTransport()) catch |err| {
-                debug_trace.logf("auth", "team picker load failed err={s}", .{@errorName(err)});
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .@"error",
-                    .body = switch (err) {
-                        error.NoSession => "The fx login session is no longer available. Sign in to change teams.",
-                        error.NoTeams => "No Vercel teams are available for this account.",
-                        else => "Could not load Vercel teams. The current team is unchanged.",
-                    },
-                }, true);
-                return;
-            };
-            defer selection.deinit(app.alloc);
-            app.auth.openTeamPicker(app.alloc, &selection);
-            app.shell.render_requests.request(.footer);
+            try writeAuthNotice(app, .{
+                .topic = "auth",
+                .tone = .warning,
+                .body = "Team switching is not supported. Run /login and choose SuperGrok or Codex.",
+            });
         }
 
         fn applyTeamChoice(app: *App, index: usize) !void {
@@ -1033,23 +1022,12 @@ pub fn Runtime(comptime App: type) type {
         }
 
         fn beginSignIn(app: *App, from_root: bool) !void {
-            try app.flushBeforeBlockingExternalWork();
-
-            const started = if (from_root)
-                app.auth.openSignInPickerFromRoot(app.alloc)
-            else
-                app.auth.openSignInPicker(app.alloc);
-            if (started catch |err| {
-                debug_trace.logf("auth", "login failed err={s}", .{@errorName(err)});
-                try writeLoginError(app, .fx_login, err);
-                return;
-            }) {
-                app.shell.render_requests.request(.footer);
-                // Open the browser as soon as the device code is ready instead of
-                // waiting for Enter; Enter stays as a manual re-open, and
-                // FX_NO_OPEN_BROWSER opts out for headless/SSH sessions.
-                if (io_mod.getenv("FX_NO_OPEN_BROWSER") == null) try openSignInBrowser(app);
-            }
+            _ = from_root;
+            try writeAuthNotice(app, .{
+                .topic = "auth",
+                .tone = .warning,
+                .body = "Use SuperGrok or Codex. Run /login and choose Sign in with SuperGrok or Sign in with Codex.",
+            });
         }
 
         fn openSignInBrowser(app: *App) !void {
@@ -1184,9 +1162,9 @@ pub fn Runtime(comptime App: type) type {
                 }
             else switch (err) {
                 error.ClientIdMissing => .{ .topic = "auth", .tone = .@"error", .body = "fx login is not configured yet. The current credential is unchanged." },
-                error.AccessDenied => .{ .topic = "auth", .tone = .@"error", .body = "Vercel sign-in was denied. The current credential is unchanged." },
-                error.ExpiredToken, error.LoginTimedOut => .{ .topic = "auth", .tone = .warning, .body = "The Vercel sign-in code expired. The current credential is unchanged; run /login to try again." },
-                else => .{ .topic = "auth", .tone = .@"error", .body = "Vercel sign-in failed. The current credential is unchanged." },
+                error.AccessDenied => .{ .topic = "auth", .tone = .@"error", .body = "Sign-in was denied. The current credential is unchanged." },
+                error.ExpiredToken, error.LoginTimedOut => .{ .topic = "auth", .tone = .warning, .body = "Sign-in expired. The current credential is unchanged; run /login to try again." },
+                else => .{ .topic = "auth", .tone = .@"error", .body = "Sign-in failed. The current credential is unchanged." },
             };
             try writeAuthNotice(app, notice);
         }

@@ -8,7 +8,7 @@ This `ttaatoo/fx` fork talks to SuperGrok and Anthropic directly. It does not us
 2. Anthropic, when `~/.fx/providers.json` (or `providers` in `~/.fx/settings.json`) is ready with a key.
 3. Otherwise fx asks you to run `fx login grok`.
 
-`fx login`, `fx login vercel`, `fx setup`, `fx teams`, and `fx credits` do not talk to Vercel. `AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN` are ignored.
+`fx login vercel`, `fx setup`, `fx teams`, and `fx credits` are not product commands. `AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN` are ignored.
 
 ## SuperGrok / X Premium+
 
@@ -110,6 +110,6 @@ Or set `ANTHROPIC_BASE_URL` and leave `baseUrl` empty in the config. Official An
 ## What this fork removed
 
 - Vercel AI Gateway chat, catalog, credits, teams, and OIDC
-- `fx login vercel` / `fx setup` API-key onboarding
+- `fx login vercel`, `fx setup`, `fx teams`, and Gateway credits as product commands
 - Gateway web search and Gateway auto-review
 - Docs and help that tell you Gateway login is required

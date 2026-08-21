@@ -44,7 +44,7 @@ describe("web_fetch permission progress", () => {
       ]);
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain("Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.");
+      expect(result.stderr).toContain("This model uses SuperGrok / X Premium+. Run fx login grok.");
       expectNoFetchProgress(result.stderr);
     },
     TIMEOUT,

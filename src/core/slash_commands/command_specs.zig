@@ -13,18 +13,15 @@ pub const TopLevelKind = enum {
     issue,
     login,
     logout,
-    setup,
     status,
     permissions,
     models,
     provider,
     doctor,
     background,
-    teams,
     session,
     sessions,
     @"resume",
-    credits,
     usage,
     upgrade,
     replay,
@@ -42,7 +39,6 @@ pub const SlashKind = enum {
     help,
     login,
     logout,
-    setup,
     status,
     background,
     background_stop,
@@ -66,7 +62,6 @@ pub const SlashKind = enum {
     compact,
     settings,
     alias,
-    credits,
     paste,
     fast,
     appearance,
@@ -1703,8 +1698,14 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "ask <prompt>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Run one noninteractive request") != null);
     try std.testing.expect(std.mem.find(u8, text, "Draft or publish a GitHub issue") != null);
-    try std.testing.expect(std.mem.find(u8, text, "credits|balance") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Gateway credits") != null);
+    try std.testing.expect(std.mem.find(u8, text, "login [grok|codex]") != null);
+    try std.testing.expect(std.mem.find(u8, text, "provider <xai|anthropic|codex>") != null);
+    try std.testing.expect(std.mem.find(u8, text, "credits|balance") == null);
+    try std.testing.expect(std.mem.find(u8, text, "Gateway") == null);
+    try std.testing.expect(std.mem.find(u8, text, "vercel") == null);
+    try std.testing.expect(std.mem.find(u8, text, "Vercel") == null);
+    try std.testing.expect(std.mem.find(u8, text, "  setup") == null);
+    try std.testing.expect(std.mem.find(u8, text, "  teams") == null);
     try std.testing.expect(std.mem.find(u8, text, "Flags:") != null);
     try std.testing.expect(std.mem.find(u8, text, "--context-limit <spec>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Set name=bytes|off; repeatable") != null);
@@ -1898,7 +1899,7 @@ test "slash completion categories follow canonical entries" {
 test "help catalog groups visible commands and searches all command metadata" {
     const registry = testSlashRegistry();
 
-    try std.testing.expectEqual(@as(usize, 40), helpCatalogCount(registry, ""));
+    try std.testing.expectEqual(@as(usize, 38), helpCatalogCount(registry, ""));
     try std.testing.expectEqualStrings("/help", helpCatalogSpecAt(registry, "", 0).?.command);
     try std.testing.expectEqual(@as(usize, 5), helpCatalogCategoryCount(registry, "", .general));
     try std.testing.expectEqual(@as(usize, 4), helpCatalogCount(registry, "appearance"));
@@ -2274,11 +2275,10 @@ test "slash completion descriptions follow completion matches" {
 
 test "slash completion aliases participate in ranked order" {
     try std.testing.expectEqualStrings("/background", firstSlashCompletion(testSlashRegistry(), "/ba").?);
-    try std.testing.expectEqual(@as(usize, 3), slashCompletionCount(testSlashRegistry(), "/ba"));
+    try std.testing.expectEqual(@as(usize, 2), slashCompletionCount(testSlashRegistry(), "/ba"));
     try std.testing.expectEqualStrings("/background", nthSlashCompletion(testSlashRegistry(), "/ba", 0).?);
-    try std.testing.expectEqualStrings("/balance", nthSlashCompletion(testSlashRegistry(), "/ba", 1).?);
-    try std.testing.expectEqualStrings("/feedback", nthSlashCompletion(testSlashRegistry(), "/ba", 2).?);
-    try std.testing.expectEqualStrings("/balance", firstSlashCompletion(testSlashRegistry(), "/bal").?);
+    try std.testing.expectEqualStrings("/feedback", nthSlashCompletion(testSlashRegistry(), "/ba", 1).?);
+    try std.testing.expect(firstSlashCompletion(testSlashRegistry(), "/bal") == null);
 }
 
 test "rendered slash welcome excludes non-welcome help entries" {
