@@ -184,15 +184,15 @@ pub const LoadMode = enum { stored, refresh_if_needed };
 
 const FxLoginRefreshMode = enum { if_needed, force };
 
-pub const missing_credential_message = "Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.";
-pub const missing_interactive_credential_message = "Fx needs access to Vercel AI Gateway. Run /login to sign in, /setup to use an API key, or set AI_GATEWAY_API_KEY.";
 pub const missing_chatgpt_credential_message = "fx needs a Codex subscription login for this model. Run fx login codex.";
 pub const missing_chatgpt_interactive_credential_message = "Codex needs a subscription login. Run /login and choose Sign in with Codex.";
-pub const missing_direct_credential_message = "This model uses a direct provider. Set its apiKey in ~/.fx/providers.json or ANTHROPIC_API_KEY.";
-pub const missing_direct_interactive_credential_message = "This model uses a direct provider. Set its apiKey in ~/.fx/providers.json or ANTHROPIC_API_KEY.";
+pub const missing_direct_credential_message = "This model uses Anthropic. Set its apiKey in ~/.fx/providers.json or ANTHROPIC_API_KEY.";
+pub const missing_direct_interactive_credential_message = "This model uses Anthropic. Set its apiKey in ~/.fx/providers.json or ANTHROPIC_API_KEY.";
 pub const missing_grok_credential_message = "This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.";
 pub const missing_grok_interactive_credential_message = "SuperGrok needs a subscription login. Run /login and choose Sign in with SuperGrok.";
-pub const unreadable_store_message = "Fx could not read the stored API key from " ++ stored_key_backend_label ++ ". A key may be saved but unreadable. Set FX_TRACE_LOG for the failing step, or set AI_GATEWAY_API_KEY.";
+pub const missing_credential_message = missing_grok_credential_message;
+pub const missing_interactive_credential_message = missing_grok_interactive_credential_message;
+pub const unreadable_store_message = "Fx could not read a stored key from " ++ stored_key_backend_label ++ ". Run fx login grok, or set ANTHROPIC_API_KEY.";
 
 pub const MissingSurface = enum { cli, interactive };
 
@@ -211,8 +211,8 @@ pub fn missingCredentialMessage(provider: model_provider.ProviderId, surface: Mi
             .interactive => missing_grok_interactive_credential_message,
         },
         .gateway => switch (surface) {
-            .cli => missing_credential_message,
-            .interactive => missing_interactive_credential_message,
+            .cli => missing_grok_credential_message,
+            .interactive => missing_grok_interactive_credential_message,
         },
     };
 }
@@ -295,13 +295,16 @@ pub fn resolveForProvider(
     if (provider == .anthropic) {
         return .{ .credential = try loadDirectProviderCredential(alloc, provider) };
     }
-    return resolvePreferring(
-        alloc,
-        transport,
-        secret_store,
-        mode,
-        if (preferred == .chatgpt_subscription or preferred == .grok_subscription) null else preferred,
-    );
+    _ = secret_store;
+    _ = preferred;
+    return .{};
+}
+
+pub fn isRetiredGatewaySource(source: Source) bool {
+    return switch (source) {
+        .vercel_oidc_token, .ai_gateway_api_key, .fx_login, .stored_key => true,
+        else => false,
+    };
 }
 
 /// `preferred` is the source the user last chose in the hub. It wins over the
@@ -316,7 +319,7 @@ pub fn resolvePreferring(
     preferred: ?Source,
 ) !Resolution {
     if (preferred) |source| {
-        if (source != .stored_key or !secret_store.isDisabled()) {
+        if (!isRetiredGatewaySource(source) and (source != .stored_key or !secret_store.isDisabled())) {
             const chosen = loadPreferredSource(alloc, transport, secret_store, mode, source) catch |err| blk: {
                 if (err == error.OutOfMemory) return err;
                 debug_trace.logf("auth", "preferred source load failed source={t} err={s}", .{ source, @errorName(err) });
@@ -326,27 +329,15 @@ pub fn resolvePreferring(
             debug_trace.logf("auth", "preferred source unavailable source={t}; using precedence", .{source});
         }
     }
-
-    if (try loadSource(alloc, transport, secret_store, .vercel_oidc_token)) |credential| return .{ .credential = credential };
-    if (try loadSource(alloc, transport, secret_store, .ai_gateway_api_key)) |credential| return .{ .credential = credential };
-
-    const fx_login = switch (mode) {
-        .stored => try loadStoredFxLoginCredential(alloc),
-        .refresh_if_needed => try loadFxLoginCredential(alloc, transport),
-    };
-    if (fx_login) |credential| return .{ .credential = credential };
-
-    if (secret_store.isDisabled()) return .{};
-
-    var status: StoredKeyReadStatus = .not_found;
-    const stored = loadSource(alloc, transport, secret_store, .stored_key) catch |err| blk: {
-        if (err == error.OutOfMemory) return err;
-        status = .unavailable;
-        debug_trace.logf("auth", "stored key load failed err={s} status={t}", .{ @errorName(err), status });
-        break :blk null;
-    };
-    if (stored) |credential| return .{ .credential = credential };
-    return .{ .stored_key_status = status };
+    for ([_]Source{ .grok_subscription, .custom_provider, .chatgpt_subscription }) |source| {
+        if (preferred == source) continue;
+        const chosen = loadPreferredSource(alloc, transport, secret_store, mode, source) catch |err| blk: {
+            if (err == error.OutOfMemory) return err;
+            break :blk null;
+        };
+        if (chosen) |credential| return .{ .credential = credential };
+    }
+    return .{};
 }
 
 /// `loadSource` always refreshes an expired fx login, which `.stored` mode
@@ -383,11 +374,10 @@ pub fn loadSource(
     secret_store: host.SecretStore,
     source: Source,
 ) !?Credential {
+    _ = secret_store;
+    if (isRetiredGatewaySource(source)) return null;
     return switch (source) {
-        .vercel_oidc_token => loadEnvCredential(alloc, "VERCEL_OIDC_TOKEN", source),
-        .ai_gateway_api_key => loadEnvCredential(alloc, "AI_GATEWAY_API_KEY", source),
-        .fx_login => loadFxLoginCredential(alloc, transport),
-        .stored_key => loadStoredKeyCredential(alloc, secret_store),
+        .vercel_oidc_token, .ai_gateway_api_key, .fx_login, .stored_key => null,
         .chatgpt_subscription => loadChatGptCredential(alloc, transport, .if_needed),
         .grok_subscription => loadGrokCredential(alloc, transport, .if_needed),
         .custom_provider => loadFirstDirectProviderCredential(alloc),
@@ -399,37 +389,12 @@ pub fn sourceExists(
     secret_store: host.SecretStore,
     source: Source,
 ) !bool {
+    _ = secret_store;
     return switch (source) {
-        .vercel_oidc_token => nonEmptyEnvValue("VERCEL_OIDC_TOKEN") != null,
-        .ai_gateway_api_key => nonEmptyEnvValue("AI_GATEWAY_API_KEY") != null,
-        .fx_login => blk: {
-            const loaded = oauth_session.load(alloc) catch |err| switch (err) {
-                error.OutOfMemory => return err,
-                else => {
-                    debug_trace.logf("auth", "source probe failed source=fx_login err={s}", .{@errorName(err)});
-                    break :blk false;
-                },
-            };
-            var session = loaded orelse break :blk false;
-            defer session.deinit(alloc);
-            break :blk true;
-        },
+        .vercel_oidc_token, .ai_gateway_api_key, .fx_login, .stored_key => false,
         .chatgpt_subscription => chatgpt_oauth.sourceExists(alloc),
         .grok_subscription => grok_oauth.sourceExists(alloc),
         .custom_provider => directProviderSourceExists(alloc),
-        .stored_key => blk: {
-            if (secret_store.isDisabled()) break :blk false;
-            const stored = secret_store.load(alloc) catch |err| switch (err) {
-                error.OutOfMemory => return err,
-                else => {
-                    debug_trace.logf("auth", "source probe failed source=stored_key err={s}", .{@errorName(err)});
-                    break :blk false;
-                },
-            };
-            const value = stored orelse break :blk false;
-            secret.zeroAndFree(alloc, value);
-            break :blk true;
-        },
     };
 }
 
@@ -684,20 +649,12 @@ test "stored key label discloses the backend that answered" {
     }
 }
 
-test "missing credential messages use surface commands in preferred order" {
-    const cli_login = std.mem.find(u8, missing_credential_message, "fx login").?;
-    const cli_setup = std.mem.find(u8, missing_credential_message, "fx setup").?;
-    const cli_env = std.mem.find(u8, missing_credential_message, "AI_GATEWAY_API_KEY").?;
-
-    try std.testing.expect(cli_login < cli_setup);
-    try std.testing.expect(cli_setup < cli_env);
-
-    const tui_login = std.mem.find(u8, missing_interactive_credential_message, "/login").?;
-    const tui_setup = std.mem.find(u8, missing_interactive_credential_message, "/setup").?;
-    const tui_env = std.mem.find(u8, missing_interactive_credential_message, "AI_GATEWAY_API_KEY").?;
-
-    try std.testing.expect(tui_login < tui_setup);
-    try std.testing.expect(tui_setup < tui_env);
+test "missing credential messages ask for SuperGrok login" {
+    try std.testing.expect(std.mem.find(u8, missing_credential_message, "fx login grok") != null);
+    try std.testing.expect(std.mem.find(u8, missing_credential_message, "AI_GATEWAY_API_KEY") == null);
+    try std.testing.expect(std.mem.find(u8, missing_credential_message, "Vercel") == null);
+    try std.testing.expect(std.mem.find(u8, missing_interactive_credential_message, "SuperGrok") != null);
+    try std.testing.expect(std.mem.find(u8, missing_interactive_credential_message, "AI_GATEWAY_API_KEY") == null);
 }
 
 test "credential gateway team prefers team id" {
@@ -895,7 +852,7 @@ const SecretStoreFixture = struct {
     }
 };
 
-test "source-specific credential loading bypasses generic precedence" {
+test "source-specific credential loading ignores Vercel Gateway credentials" {
     const alloc = std.testing.allocator;
     const env = try CredentialTestEnv.install(alloc, &.{
         .{ "VERCEL_OIDC_TOKEN", "oidc-token" },
@@ -904,27 +861,16 @@ test "source-specific credential loading bypasses generic precedence" {
     defer env.deinit();
 
     const resolution = try resolve(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, .refresh_if_needed);
-    var startup = resolution.credential orelse return error.TestExpectedCredential;
-    defer startup.deinit(alloc);
-    try std.testing.expectEqualStrings("oidc-token", startup.token);
-    try std.testing.expectEqual(Source.vercel_oidc_token, startup.source);
+    try std.testing.expect(resolution.credential == null);
 
-    var api_key = (try loadSource(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, .ai_gateway_api_key)).?;
-    defer api_key.deinit(alloc);
-    try std.testing.expectEqualStrings("api-key", api_key.token);
-    try std.testing.expectEqual(Source.ai_gateway_api_key, api_key.source);
-
-    var oidc = (try loadSource(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, .vercel_oidc_token)).?;
-    defer oidc.deinit(alloc);
-    try std.testing.expectEqualStrings("oidc-token", oidc.token);
-    try std.testing.expectEqual(Source.vercel_oidc_token, oidc.source);
-
-    try std.testing.expect(try sourceExists(alloc, host.unavailable_secret_store, .ai_gateway_api_key));
-    try std.testing.expect(try sourceExists(alloc, host.unavailable_secret_store, .vercel_oidc_token));
+    try std.testing.expect((try loadSource(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, .ai_gateway_api_key)) == null);
+    try std.testing.expect((try loadSource(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, .vercel_oidc_token)) == null);
+    try std.testing.expect(!(try sourceExists(alloc, host.unavailable_secret_store, .ai_gateway_api_key)));
+    try std.testing.expect(!(try sourceExists(alloc, host.unavailable_secret_store, .vercel_oidc_token)));
     try std.testing.expect(!(try sourceExists(alloc, host.unavailable_secret_store, .stored_key)));
 }
 
-test "a remembered choice outranks the environment" {
+test "a remembered Gateway choice does not load Vercel credentials" {
     const alloc = std.testing.allocator;
     const env = try CredentialTestEnv.install(alloc, &.{
         .{ "VERCEL_OIDC_TOKEN", "oidc-token" },
@@ -933,10 +879,7 @@ test "a remembered choice outranks the environment" {
     defer env.deinit();
 
     const resolution = try resolvePreferring(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, .refresh_if_needed, .ai_gateway_api_key);
-    var credential = resolution.credential orelse return error.TestExpectedCredential;
-    defer credential.deinit(alloc);
-    try std.testing.expectEqual(Source.ai_gateway_api_key, credential.source);
-    try std.testing.expectEqualStrings("api-key", credential.token);
+    try std.testing.expect(resolution.credential == null);
 }
 
 test "a remembered fx login never refreshes in stored mode" {
@@ -963,11 +906,8 @@ test "a remembered choice that no longer resolves falls back to precedence" {
     });
     defer env.deinit();
 
-    // fx_login is remembered but no session exists, so precedence must still answer.
     const resolution = try resolvePreferring(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, .refresh_if_needed, .fx_login);
-    var credential = resolution.credential orelse return error.TestExpectedCredential;
-    defer credential.deinit(alloc);
-    try std.testing.expectEqual(Source.ai_gateway_api_key, credential.source);
+    try std.testing.expect(resolution.credential == null);
 }
 
 test "no remembered choice resolves exactly as plain precedence" {
@@ -983,8 +923,8 @@ test "no remembered choice resolves exactly as plain precedence" {
     var plain = try resolve(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, .refresh_if_needed);
     defer if (plain.credential) |*credential| credential.deinit(alloc);
 
-    try std.testing.expectEqual(plain.credential.?.source, preferred.credential.?.source);
-    try std.testing.expectEqualStrings(plain.credential.?.token, preferred.credential.?.token);
+    try std.testing.expect(plain.credential == null);
+    try std.testing.expect(preferred.credential == null);
 }
 
 test "a disabled stored key is reported as never attempted, not as absent" {
@@ -1016,10 +956,9 @@ test "credential resolution loads a stored key only through the injected host po
     );
     defer if (resolution.credential) |*credential| credential.deinit(alloc);
 
-    try std.testing.expectEqual(@as(usize, 1), store_fixture.load_calls);
+    try std.testing.expectEqual(@as(usize, 0), store_fixture.load_calls);
     try std.testing.expectEqual(StoredKeyReadStatus.not_attempted, resolution.stored_key_status);
-    try std.testing.expectEqual(Source.stored_key, resolution.credential.?.source);
-    try std.testing.expectEqualStrings("injected-test-value", resolution.credential.?.token);
+    try std.testing.expect(resolution.credential == null);
 }
 
 test "credential resolution preserves unreadable store classification" {
@@ -1035,7 +974,7 @@ test "credential resolution preserves unreadable store classification" {
         .stored,
     );
 
-    try std.testing.expectEqual(@as(usize, 1), store_fixture.load_calls);
+    try std.testing.expectEqual(@as(usize, 0), store_fixture.load_calls);
     try std.testing.expect(resolution.credential == null);
-    try std.testing.expectEqual(StoredKeyReadStatus.unavailable, resolution.stored_key_status);
+    try std.testing.expectEqual(StoredKeyReadStatus.not_attempted, resolution.stored_key_status);
 }

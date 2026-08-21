@@ -4,7 +4,7 @@
  ⠀⠀⠀⣠⣶⣿⣿⣷⣶⡶⣶⣶⣆⠀⠀⠀⣴⣶⣶⠆
  ⠀⠀⠀⠉⢹⣿⣿⠉⠉⠀⠘⢿⣿⣧⣀⣾⣿⡿⠃⠀             Tiny, open, embeddable, native coding agent.
  ⠀⠀⠀⠀⣼⣿⡏⠀⠀⠀⠀⠀⠻⣿⣿⣿⠟⠀⠀⠀
- ⠀⠀⠀⢀⣿⣿⠃⠀⠀⠀⠀⢠⣦⠘⢿⣿⣷⡀⠀⠀             curl -fsSL https://fx.sh/setup.sh | bash
+ ⠀⠀⠀⢀⣿⣿⠃⠀⠀⠀⠀⢠⣦⠘⢿⣿⣷⡀⠀⠀             git clone && zig build
  ⠀⠀⠀⣸⣿⡟⠀⠀⠀⠀⣰⣿⣿⠗⠀⠻⣿⣿⣄⠀
  ⠀⠀⠀⣿⣿⠇⠀⠀⠀⠾⠿⠿⠋⠀⠀⠀⠘⠿⠿⠦             ⚠ Status: Experimental. Use at your own risk.
   ⠀⣸⣿⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -21,36 +21,31 @@ It's open source (Apache-2.0), model-agnostic, and suitable for both local and c
 
 ## Install
 
+This fork does not use the Vercel `fx.sh` installer as the only path. Build from source with [Zig 0.16.0+](https://ziglang.org/download/):
+
 ```bash
-curl -fsSL https://fx.sh/setup.sh | bash
+git clone https://github.com/ttaatoo/fx.git
+cd fx
+zig build -Doptimize=ReleaseSafe
+./zig-out/bin/fx
 ```
 
 ## Run fx
 
-Sign in with Vercel AI Gateway:
+Sign in with SuperGrok / X Premium+ (default):
 
 ```bash
-fx login
-```
-
-Or use an eligible ChatGPT subscription through OpenAI Codex OAuth:
-
-```bash
-fx login codex
+fx login grok
 fx
 ```
 
-Inside fx, `/provider` switches between Gateway and Codex, and `/model` lists the active provider's fetched models. Codex model IDs are the raw IDs returned by its authenticated catalog. Use `/logout codex` to remove the Codex session without affecting Vercel access.
+Bare `fx login` starts SuperGrok. This uses subscriber quota, not an `XAI_API_KEY`.
 
-This fork can also use Anthropic Messages (`ANTHROPIC_API_KEY`) and SuperGrok / X Premium+ OAuth without Vercel AI Gateway. SuperGrok is a subscriber login (`fx login grok`), not an `XAI_API_KEY`. That path is a fork experiment. See [Direct LLM providers](docs/direct-providers.md) for Anthropic config, Claude Code proxy examples, and SuperGrok login plus quota notes.
+Or use Anthropic Messages with `ANTHROPIC_API_KEY` and `~/.fx/providers.json`. Optional `ANTHROPIC_BASE_URL` can point at the official API or a Claude Code proxy. See [Providers](docs/direct-providers.md).
 
-The OpenAI Codex route uses ChatGPT subscription access directly and never sends its OAuth token to Vercel AI Gateway. The session is stored privately at `~/.fx/chatgpt-auth.json` and refreshed when needed. On supported Codex models, `/fast` requests OpenAI's priority service tier and consumes ChatGPT credits at the higher Fast mode rate.
+Codex (`fx login codex`) is optional and talks to OpenAI directly. This fork does not use Vercel AI Gateway, `fx login vercel`, `fx setup`, Gateway credits, or `AI_GATEWAY_API_KEY`.
 
-To use an AI Gateway API key instead:
-
-```bash
-fx setup
-```
+Inside fx, `/provider` switches between SuperGrok, Anthropic, and Codex. `/model` lists the active provider's models.
 
 Run fx from a project:
 
@@ -121,7 +116,7 @@ Read the [fx documentation](https://fx.sh/docs).
 Building fx requires [Zig 0.16.0+](https://ziglang.org/download/):
 
 ```bash
-git clone https://github.com/vercel-labs/fx.git
+git clone https://github.com/ttaatoo/fx.git
 cd fx
 zig build -Doptimize=ReleaseSafe
 ./zig-out/bin/fx

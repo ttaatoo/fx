@@ -28,7 +28,6 @@ const background_process_provider = @import(
 const github_publish = @import("../github/github_publish.zig");
 const github_workflows = @import("../github/github_workflows.zig");
 const host = @import("../hosts/host.zig");
-const login_flow = @import("../auth/login_flow.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
 const secret = @import("../auth/secret.zig");
@@ -779,24 +778,17 @@ fn runNonInteractiveWithDeps(
         .issue => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .issue),
         .login => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx login [vercel|codex|grok]\n");
+                try writeStderr(deps, "usage: fx login [grok|codex]\n");
                 return .handled_failure;
             };
-            // Preserve the original `fx login` behavior for scripts and users.
-            const login_provider = maybe_login_provider orelse .vercel;
+            const login_provider = maybe_login_provider orelse .grok;
+            if (login_provider.isRetired()) {
+                try writeStderr(deps, "fx login: Vercel AI Gateway is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+                return .handled_failure;
+            }
             switch (login_provider) {
-                .vercel => login_flow.runLogin(
-                    alloc,
-                    cfg.gateway_provider.oauth_transport,
-                    cfg.url_opener,
-                ) catch |err| {
-                    const message = switch (err) {
-                        error.ClientIdMissing => "fx login: missing FX_OAUTH_CLIENT_ID; configure the fx Vercel App client id first\n",
-                        error.AccessDenied => "fx login: authorization denied\n",
-                        error.ExpiredToken, error.LoginTimedOut => "fx login: authorization expired; run fx login again\n",
-                        else => "fx login: failed to sign in\n",
-                    };
-                    try writeStderr(deps, message);
+                .vercel => {
+                    try writeStderr(deps, "fx login: Vercel AI Gateway is not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
                     return .handled_failure;
                 },
                 .codex => chatgpt_oauth.runLogin(
@@ -831,11 +823,14 @@ fn runNonInteractiveWithDeps(
         },
         .logout => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx logout [vercel|codex|grok]\n");
+                try writeStderr(deps, "usage: fx logout [grok|codex]\n");
                 return .handled_failure;
             };
-            // Preserve the original `fx logout` behavior for scripts and users.
-            const login_provider = maybe_login_provider orelse .vercel;
+            const login_provider = maybe_login_provider orelse .grok;
+            if (login_provider.isRetired()) {
+                try writeStderr(deps, "fx logout: Vercel AI Gateway is not supported. Use fx logout grok or fx logout codex.\n");
+                return .handled_failure;
+            }
             if (login_provider == .codex) {
                 const outcome = chatgpt_oauth.logout() catch {
                     try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
@@ -880,52 +875,21 @@ fn runNonInteractiveWithDeps(
                     },
                 };
             }
-            const result = login_flow.logout(alloc, cfg.gateway_provider.oauth_transport) catch |err| switch (err) {
-                error.SessionDeleteFailed => {
-                    try writeStderr(deps, "fx logout: failed to durably remove saved Fx login\n");
-                    return .handled_failure;
-                },
-            };
-            if (result.local_durability_failed) {
-                try writeStderr(deps, "fx logout: failed to durably remove saved Fx login\n");
-            } else {
-                try writeStdout(
-                    deps,
-                    if (result.session_deleted) "Signed out of fx.\n" else "No fx login session found.\n",
-                );
-            }
-            if (result.remote_revocation_failed) {
-                try writeStderr(deps, login_flow.remote_revocation_warning);
-                try writeStderr(deps, "\n");
-            }
-            return if (result.local_durability_failed) .handled_failure else .handled_success;
+            try writeStderr(deps, "fx logout: Vercel AI Gateway is not supported. Use fx logout grok or fx logout codex.\n");
+            return .handled_failure;
         },
         .teams => |rest| {
-            if (rest.len != 0) {
-                try writeStderr(deps, "usage: fx teams\n");
-                return .handled_failure;
-            }
-            login_flow.runTeams(alloc, cfg.gateway_provider.oauth_transport) catch |err| {
-                const message = switch (err) {
-                    error.NoSession => "fx teams: run fx login first\n",
-                    error.SessionChanged => "fx teams: authentication changed; try again\n",
-                    error.TeamRequestFailed => "fx teams: failed to list Vercel teams\n",
-                    error.InvalidTeamSelection => "fx teams: no team selected\n",
-                    error.AccessDenied => "fx teams: authorization denied\n",
-                    else => "fx teams: failed to switch team\n",
-                };
-                try writeStderr(deps, message);
-                return .handled_failure;
-            };
-            return .handled_success;
+            _ = rest;
+            try writeStderr(deps, "fx teams: Vercel teams are not supported. Run fx login grok, or set ANTHROPIC_API_KEY.\n");
+            return .handled_failure;
         },
         .provider => |rest| {
             if (rest.len != 1) {
-                try writeStderr(deps, "usage: fx provider <gateway|codex|anthropic|xai>\n");
+                try writeStderr(deps, "usage: fx provider <xai|anthropic|codex>\n");
                 return .handled_failure;
             }
-            const target = model_provider.parse(rest[0]) orelse {
-                try writeStderr(deps, "fx provider: expected gateway, codex, anthropic, or xai\n");
+            const target = model_provider.parseProduct(rest[0]) orelse {
+                try writeStderr(deps, "fx provider: expected xai, anthropic, or codex\n");
                 return .handled_failure;
             };
             const workspace_root = try io_mod.realpathAlloc(alloc, ".");
@@ -936,7 +900,11 @@ fn runNonInteractiveWithDeps(
                 return .handled_failure;
             };
             defer settings.deinit(alloc);
-            if ((settings.provider orelse .gateway) == target) {
+            const current = if (settings.provider) |provider|
+                if (model_provider.isRetired(provider)) model_provider.default_id else provider
+            else
+                model_provider.default_id;
+            if (current == target) {
                 try writeStdout(deps, switch (target) {
                     .codex => "Codex is already selected.\n",
                     .anthropic => "Anthropic is already selected.\n",
@@ -1046,12 +1014,9 @@ fn runNonInteractiveWithDeps(
             });
             return .handled_success;
         },
-        .setup => |rest| {
-            if (rest.len != 0) {
-                try writeTopLevelUsage(cfg.command_catalog, deps, .setup);
-                return .handled_failure;
-            }
-            return if (try runPasteSetup(alloc, cfg.secret_store, deps)) .handled_success else .handled_failure;
+        .setup => {
+            try writeStderr(deps, "fx setup: AI Gateway API keys are not supported. Run fx login grok, or set ANTHROPIC_API_KEY in ~/.fx/providers.json.\n");
+            return .handled_failure;
         },
         .status => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
@@ -1532,36 +1497,15 @@ fn runNonInteractiveWithDeps(
             );
             defer startup.deinit(alloc);
             try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
-            if (model_provider.isDirect(startup.provider)) {
-                const message = "credits are a Vercel AI Gateway feature and are unavailable for direct providers";
-                if (opts.format == .json) {
-                    try writeJsonCommandFailureCode(alloc, deps, "credits", "Unavailable", message);
-                } else {
-                    try writeStderr(deps, "fx credits: ");
-                    try writeStderr(deps, message);
-                    try writeStderr(deps, "\n");
-                }
-                return .handled_failure;
+            const message = "credits are not available; this fork uses SuperGrok or Anthropic instead of Vercel AI Gateway";
+            if (opts.format == .json) {
+                try writeJsonCommandFailureCode(alloc, deps, "credits", "Unavailable", message);
+            } else {
+                try writeStderr(deps, "fx credits: ");
+                try writeStderr(deps, message);
+                try writeStderr(deps, "\n");
             }
-
-            var snapshot = cfg.gateway_provider.credits.fetch(alloc, .{
-                .credential = startup.apiKey(),
-                .credential_source = if (startup.credential) |credential| credential.source else null,
-                .tenant = startup.gatewayTeam(),
-            });
-            defer snapshot.deinit(alloc);
-            const text = try snapshot.render(alloc, opts.format);
-            defer alloc.free(text);
-            if (snapshot.err_message != null) {
-                if (opts.format == .json) {
-                    try writeFormattedOutput(deps, text, opts.format);
-                } else {
-                    try writeStderr(deps, text);
-                }
-                return .handled_failure;
-            }
-            try writeFormattedOutput(deps, text, opts.format);
-            return .handled_success;
+            return .handled_failure;
         },
         .usage => |rest| {
             const opts = parseUsageArgs(rest) catch |err| {
@@ -1753,53 +1697,6 @@ fn writeStdout(deps: RunDeps, text: []const u8) !void {
 
 fn writeStderr(deps: RunDeps, text: []const u8) !void {
     try deps.write_stderr(deps.stderr_ctx, text);
-}
-
-fn runPasteSetup(
-    alloc: Allocator,
-    secret_store: host.SecretStore,
-    deps: RunDeps,
-) !bool {
-    if (secret_store.isDisabled()) {
-        try writeStderr(deps, "fx setup: stored API keys are disabled by FX_DISABLE_KEYCHAIN\n");
-        return false;
-    }
-    if (!deps.setup_terminal_available(deps.setup_ctx)) {
-        try writeStderr(deps, "fx setup: an interactive terminal is required to paste an API key\n");
-        return false;
-    }
-
-    try writeStderr(deps, "Paste AI Gateway API key (input hidden): ");
-    const stored_interactively = secret_store.storeInteractive() catch {
-        try writeStderr(deps, "\nfx setup: API key was not saved\n");
-        return false;
-    };
-    if (!stored_interactively) {
-        const key = deps.read_masked_key(
-            deps.setup_ctx,
-            alloc,
-            deps.write_stderr,
-            deps.stderr_ctx,
-        ) catch {
-            try writeStderr(deps, "\nfx setup: API key was not saved\n");
-            return false;
-        };
-        defer secret.zeroAndFree(alloc, key);
-        try writeStderr(deps, "\n");
-        secret_store.store(alloc, key) catch {
-            try writeStderr(deps, "fx setup: API key was not saved\n");
-            return false;
-        };
-    }
-
-    const message = try std.fmt.allocPrint(
-        alloc,
-        "Saved API key to {s}.\n",
-        .{secret_store.backend_label},
-    );
-    defer alloc.free(message);
-    try writeStdout(deps, message);
-    return true;
 }
 
 fn setupTerminalAvailableDefault(_: ?*anyopaque) bool {
@@ -4229,52 +4126,9 @@ test "runIfRequested version flags reject extra args" {
     }
 }
 
-test "setup is a paste-only stored-key adapter" {
+test "setup rejects Gateway API-key onboarding" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_read_calls);
-    try std.testing.expect(capture.setup_value_matched);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Paste AI Gateway API key") != null);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel CLI") == null);
-    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), cfg.secret_store.backend_label) != null);
-}
-
-test "setup delegates secure input to an interactive host store" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    capture.setup_interactive_store = true;
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expect(!capture.setup_value_matched);
-}
-
-test "setup preserves the disabled secret-store failure" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    capture.setup_store_disabled = true;
     var cfg = testConfig();
     cfg.secret_store = capture.secretStore();
 
@@ -4288,10 +4142,8 @@ test "setup preserves the disabled secret-store failure" {
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqual(@as(usize, 0), capture.setup_store_calls);
     try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expectEqualStrings(
-        "fx setup: stored API keys are disabled by FX_DISABLE_KEYCHAIN\n",
-        capture.stderr.written(),
-    );
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "AI Gateway API keys are not supported") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fx login grok") != null);
 }
 
 test "workspace indeterminate errors report the reconciled durable state" {
@@ -4851,30 +4703,25 @@ test "runIfRequested models passes startup team to fetch seam" {
     );
 }
 
-test "runIfRequested credits renders through the configured provider" {
+test "runIfRequested login vercel is rejected" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
-    var probe = CreditsProviderProbe{ .outcome = .success };
-    var cfg = testConfig();
-    cfg.gateway_provider.credits = probe.provider();
 
-    var deps = capture.deps();
-    deps.load_startup_state = stubLoadStartupState;
-
-    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("credits"), @constCast("--json") }, cfg, deps);
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), probe.calls);
-    try std.testing.expect(probe.saw_expected_input);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"balance\":\"10\",\"used\":\"2\",\"plan\":\"pro\"}\n",
-        capture.stdout.written(),
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("login"), @constCast("vercel") },
+        testConfig(),
+        capture.deps(),
     );
+    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel AI Gateway is not supported") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fx login grok") != null);
 }
 
-test "runIfRequested credits failures use nonzero text and json contracts" {
+test "runIfRequested credits is unavailable without calling Gateway" {
     var text_capture = CaptureOutput.init(std.testing.allocator);
     defer text_capture.deinit();
-    var text_probe = CreditsProviderProbe{ .outcome = .failure };
+    var text_probe = CreditsProviderProbe{ .outcome = .success };
     var text_cfg = testConfig();
     text_cfg.gateway_provider.credits = text_probe.provider();
     var text_deps = text_capture.deps();
@@ -4887,15 +4734,13 @@ test "runIfRequested credits failures use nonzero text and json contracts" {
         text_deps,
     );
     try std.testing.expectEqual(RunResult.handled_failure, text_result);
+    try std.testing.expectEqual(@as(usize, 0), text_probe.calls);
     try std.testing.expectEqualStrings("", text_capture.stdout.written());
-    try std.testing.expectEqualStrings(
-        "[credits] error: gateway unavailable\n",
-        text_capture.stderr.written(),
-    );
+    try std.testing.expect(std.mem.find(u8, text_capture.stderr.written(), "credits are not available") != null);
 
     var json_capture = CaptureOutput.init(std.testing.allocator);
     defer json_capture.deinit();
-    var json_probe = CreditsProviderProbe{ .outcome = .failure };
+    var json_probe = CreditsProviderProbe{ .outcome = .success };
     var json_cfg = testConfig();
     json_cfg.gateway_provider.credits = json_probe.provider();
     var json_deps = json_capture.deps();
@@ -4908,10 +4753,8 @@ test "runIfRequested credits failures use nonzero text and json contracts" {
         json_deps,
     );
     try std.testing.expectEqual(RunResult.handled_failure, json_result);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"error\":\"gateway unavailable\"}\n",
-        json_capture.stdout.written(),
-    );
+    try std.testing.expectEqual(@as(usize, 0), json_probe.calls);
+    try std.testing.expect(std.mem.find(u8, json_capture.stdout.written(), "\"code\":\"Unavailable\"") != null);
     try std.testing.expectEqualStrings("", json_capture.stderr.written());
 }
 
@@ -4925,7 +4768,7 @@ test "runIfRequested local json success appends exactly one newline" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json") }, testConfig(), deps);
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"auto\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
+        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.\",\"permission_mode\":\"auto\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
         capture.stdout.written(),
     );
     try std.testing.expect(!std.mem.endsWith(u8, capture.stdout.written(), "\n\n"));
@@ -5018,7 +4861,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"ask\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
+        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.\",\"permission_mode\":\"ask\",\"sandbox\":\"none\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
         capture.stdout.written(),
     );
 }
@@ -5301,7 +5144,9 @@ fn stubLoadCatalogStartupState(
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupState {
-    return stubLoadStartupState(alloc, oauth_transport.unavailable_provider, secret_store, default_model, default_agent_step_limit);
+    var state = try stubLoadStartupState(alloc, oauth_transport.unavailable_provider, secret_store, default_model, default_agent_step_limit);
+    state.provider = .gateway;
+    return state;
 }
 
 fn stubLoadStartupStatus(

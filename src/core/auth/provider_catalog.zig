@@ -12,6 +12,10 @@ pub const Id = enum {
             .grok => "grok",
         };
     }
+
+    pub fn isRetired(self: Id) bool {
+        return self == .vercel;
+    }
 };
 
 pub const Entry = struct {
@@ -22,12 +26,6 @@ pub const Entry = struct {
 };
 
 pub const entries = [_]Entry{
-    .{
-        .id = .vercel,
-        .name = "Vercel AI Gateway",
-        .description = "Vercel account or AI Gateway billing",
-        .subscription = false,
-    },
     .{
         .id = .codex,
         .name = "Codex",
@@ -52,13 +50,20 @@ pub fn parse(value: []const u8) ?Id {
     return null;
 }
 
+pub fn parseProduct(value: []const u8) ?Id {
+    const parsed = parse(value) orelse return null;
+    return if (parsed.isRetired()) null else parsed;
+}
+
 pub fn find(id: Id) *const Entry {
     for (&entries) |*entry| if (entry.id == id) return entry;
     unreachable;
 }
 
-test "auth provider catalog exposes SuperGrok without unreleased aliases" {
+test "auth provider catalog exposes SuperGrok without Vercel login" {
     try std.testing.expectEqual(Id.vercel, parse("vercel").?);
+    try std.testing.expect(parseProduct("vercel") == null);
+    try std.testing.expect(parseProduct("ai-gateway") == null);
     try std.testing.expectEqual(Id.codex, parse("codex").?);
     try std.testing.expectEqual(Id.grok, parse("grok").?);
     try std.testing.expectEqual(Id.grok, parse("xai").?);

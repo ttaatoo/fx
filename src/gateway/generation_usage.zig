@@ -1,5 +1,4 @@
 const std = @import("std");
-const client = @import("client.zig");
 const generation_usage_provider = @import("../core/session/generation_usage_provider.zig");
 const debug_trace = @import("../core/shared/debug_trace.zig");
 const types = @import("../core/shared/types.zig");
@@ -13,46 +12,11 @@ pub const provider = generation_usage_provider.Provider{
 
 fn lookup(
     _: ?*anyopaque,
-    alloc: Allocator,
+    _: Allocator,
     input: generation_usage_provider.LookupInput,
 ) generation_usage_provider.LookupError!generation_usage_provider.LookupOutcome {
-    if (!client.isTrustedGenerationOrigin(input.origin)) return .reject;
-
-    var response = client.fetchGatewayGenerationResult(
-        alloc,
-        input.credential,
-        input.tenant,
-        input.origin,
-        input.generation_id,
-        input.cancel_flag,
-    ) catch |err| switch (err) {
-        error.Cancelled => return error.Cancelled,
-        error.OutOfMemory => return error.OutOfMemory,
-        else => {
-            debug_trace.logf(
-                "gateway",
-                "generation usage lookup failed reason={s}",
-                .{@errorName(err)},
-            );
-            return error.Unavailable;
-        },
-    };
-    defer response.deinit(alloc);
-
-    if (response.status != .ok) {
-        const outcome = classifyStatus(response.status);
-        debug_trace.logf(
-            "gateway",
-            "generation usage lookup status={d} outcome={s}",
-            .{ @intFromEnum(response.status), @tagName(outcome) },
-        );
-        return outcome;
-    }
-    return parseLookupOutcome(
-        alloc,
-        response.body,
-        input.generation_id,
-    );
+    _ = input;
+    return .reject;
 }
 
 fn classifyStatus(status: std.http.Status) generation_usage_provider.LookupOutcome {
@@ -267,19 +231,27 @@ test "generation lookup status policy preserves retry and auth outcomes" {
     );
 }
 
-test "generation lookup rejects untrusted origins before transport" {
+test "generation lookup rejects every origin on this fork" {
     var cancel = std.atomic.Value(bool).init(false);
-    const outcome = try provider.lookup(std.testing.allocator, .{
-        .credential = "unused",
-        .tenant = null,
-        .origin = "https://example.com",
-        .generation_id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        .cancel_flag = &cancel,
-    });
-    try std.testing.expectEqual(
-        generation_usage_provider.LookupOutcome.reject,
-        outcome,
-    );
+    for ([_][]const u8{
+        "https://example.com",
+        "https://ai-gateway.vercel.sh",
+        "https://api.anthropic.com",
+        "https://cli-chat-proxy.grok.com",
+        "http://127.0.0.1:3000",
+    }) |origin| {
+        const outcome = try provider.lookup(std.testing.allocator, .{
+            .credential = "unused",
+            .tenant = null,
+            .origin = origin,
+            .generation_id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            .cancel_flag = &cancel,
+        });
+        try std.testing.expectEqual(
+            generation_usage_provider.LookupOutcome.reject,
+            outcome,
+        );
+    }
 }
 
 test "generation record parser accepts authoritative response fields" {

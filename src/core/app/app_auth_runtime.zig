@@ -153,11 +153,11 @@ pub fn Runtime(comptime App: type) type {
                 app.shell.render_requests.request(.footer);
                 return;
             }
-            const provider = model_provider.parse(target) orelse {
+            const provider = model_provider.parseProduct(target) orelse {
                 try app.writeDomainNotice(.{
                     .topic = "provider",
                     .tone = .warning,
-                    .body = "Usage: /provider [gateway|codex|anthropic|xai]",
+                    .body = "Usage: /provider [xai|anthropic|codex]",
                 }, true);
                 return;
             };
@@ -175,15 +175,17 @@ pub fn Runtime(comptime App: type) type {
             }
             const requested_provider = if (std.mem.trim(u8, target, " \t\r\n").len == 0)
                 null
-            else
-                provider_catalog.parse(std.mem.trim(u8, target, " \t\r\n")) orelse {
+            else blk: {
+                const parsed = provider_catalog.parseProduct(std.mem.trim(u8, target, " \t\r\n")) orelse {
                     try writeAuthNotice(app, .{
                         .topic = "auth",
                         .tone = .warning,
-                        .body = "Usage: /logout [vercel|codex|grok]",
+                        .body = "Usage: /logout [grok|codex]",
                     });
                     return;
                 };
+                break :blk parsed;
+            };
             try app.flushBeforeBlockingExternalWork();
             const selected_model_uses_chatgpt = if (comptime provider_runtime.supported(App))
                 provider_runtime.provider(app) == .codex

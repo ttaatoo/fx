@@ -37,7 +37,7 @@ const NO_GATEWAY_AUTH = {
   VERCEL_OIDC_TOKEN: undefined,
 };
 const MISSING_AUTH_MESSAGE =
-  "Fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.";
+  "This model uses SuperGrok / X Premium+. Run fx login grok. This uses subscription quota, not an XAI_API_KEY.";
 
 const KEYCHAIN_SERVICE = "FX_AI_GATEWAY_API_KEY";
 
@@ -614,16 +614,18 @@ describe("cli: status", () => {
         expect(doctorText.code).toBe(0);
         expect(doctorJsonResult.code).toBe(0);
         const expectedAuth = {
-          auth: "fx login",
-          auth_refreshable: true,
-          team: "vercel-labs",
+          auth: "missing",
+          auth_refreshable: false,
+          auth_help: MISSING_AUTH_MESSAGE,
         };
         expect(JSON.parse(statusJsonResult.stdout.trim())).toMatchObject(expectedAuth);
-        expect(JSON.parse(doctorJsonResult.stdout.trim())).toMatchObject(expectedAuth);
+        expect(JSON.parse(doctorJsonResult.stdout.trim())).toMatchObject({
+          auth: "missing",
+          auth_refreshable: false,
+        });
         for (const output of [statusText.stdout, doctorText.stdout]) {
-          expect(output).toContain("auth=fx login");
-          expect(output).toContain("auth_refreshable=true");
-          expect(output).toContain("team=vercel-labs");
+          expect(output).not.toContain("auth=fx login");
+          expect(output).not.toContain("team=vercel-labs");
         }
         for (const output of [
           statusText.stdout,
@@ -671,11 +673,13 @@ describe("cli: status", () => {
         expect(status.code).toBe(0);
         expect(doctor.code).toBe(0);
         const expectedAuth = {
-          auth: "fx login",
-          auth_refreshable: true,
-          team: "vercel-labs",
+          auth: "missing",
+          auth_refreshable: false,
         };
-        expect(JSON.parse(status.stdout.trim())).toMatchObject(expectedAuth);
+        expect(JSON.parse(status.stdout.trim())).toMatchObject({
+          ...expectedAuth,
+          auth_help: MISSING_AUTH_MESSAGE,
+        });
         expect(JSON.parse(doctor.stdout.trim())).toMatchObject(expectedAuth);
         expect(requestCatcher.requests).toEqual([]);
       } finally {
@@ -862,7 +866,7 @@ describe("cli: status", () => {
 
         const credits = await runFx(["credits"], { cwd, env });
         expect(credits.code).not.toBe(0);
-        expect(credits.stderr).toContain("unavailable for direct providers");
+        expect(credits.stderr).toContain("credits are not available");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -1877,10 +1881,10 @@ describe("cli: logout", () => {
         const status = await runFx(["status", "--json"], { env });
 
         expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("No fx login session found.\n");
+        expect(logout.stdout).toBe("No SuperGrok login session found.\n");
         expect(logout.stderr).toBe("");
         expect(JSON.parse(status.stdout)).toMatchObject({
-          auth: "AI_GATEWAY_API_KEY",
+          auth: "missing",
           auth_refreshable: false,
         });
         expect(logout.stdout).not.toContain(apiToken);
@@ -1961,7 +1965,7 @@ describe("cli: setup", () => {
       });
       expect(r.code).toBe(1);
       expect(r.stdout).toBe("");
-      expect(r.stderr).toContain("stored API keys are disabled");
+      expect(r.stderr).toContain("AI Gateway API keys are not supported");
     },
     TIMEOUT,
   );
@@ -1995,7 +1999,7 @@ exit 99
         });
         expect(r.code).toBe(1);
         expect(r.stdout).toBe("");
-        expect(r.stderr).toContain("interactive terminal is required");
+        expect(r.stderr).toContain("AI Gateway API keys are not supported");
         expect(existsSync(invocationLog)).toBe(false);
       } finally {
         rmSync(fakeDir, { recursive: true, force: true });
@@ -2023,8 +2027,8 @@ describe("cli: stored key file backend", () => {
         const readable = await runFx(["status", "--json"], { env });
         expect(readable.code).toBe(0);
         const readableJson = JSON.parse(readable.stdout);
-        expect(readableJson.auth).toBe("stored API key (profile file)");
-        expect(readableJson.auth_help).toBeUndefined();
+        expect(readableJson.auth).toBe("missing");
+        expect(readableJson.auth_help).toBe(MISSING_AUTH_MESSAGE);
         expect(readable.stdout).not.toContain("vca_file_backend_key");
 
         chmodSync(keyPath, 0o644);
@@ -2032,9 +2036,7 @@ describe("cli: stored key file backend", () => {
         expect(refused.code).toBe(0);
         const refusedJson = JSON.parse(refused.stdout);
         expect(refusedJson.auth).toBe("missing");
-        // Refusal must not read as absence.
-        expect(refusedJson.auth_help).toContain("could not read the stored API key");
-        expect(refusedJson.auth_help).not.toBe(MISSING_AUTH_MESSAGE);
+        expect(refusedJson.auth_help).toBe(MISSING_AUTH_MESSAGE);
 
         rmSync(keyPath);
         const absent = await runFx(["status", "--json"], { env });

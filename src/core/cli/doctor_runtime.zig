@@ -35,7 +35,7 @@ pub const Check = struct {
 pub const Snapshot = struct {
     workspace_root: []u8,
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     owned_model: ?[]u8 = null,
     auth: auth_runtime.StatusSnapshot = .{},
     permission_mode: types.PermissionMode,
@@ -110,7 +110,10 @@ pub fn collect(
         return snapshot;
     };
     defer detailed.deinit(alloc);
-    snapshot.provider = detailed.settings.provider orelse .gateway;
+    snapshot.provider = blk: {
+        const raw = detailed.settings.provider orelse break :blk model_provider.default_id;
+        break :blk if (model_provider.isRetired(raw)) model_provider.default_id else raw;
+    };
 
     snapshot.auth = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,

@@ -123,7 +123,7 @@ pub const StartupState = struct {
     credential: ?credentials.Credential = null,
     credential_onboarding_skipped: bool = false,
     stored_key_status: credentials.StoredKeyReadStatus = .not_attempted,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     selected_model: []u8 = &.{},
     configured_model: []u8 = &.{},
     model_source: config_runtime.ModelSource = .compiled_default,
@@ -219,7 +219,7 @@ pub const StartupState = struct {
 
 pub const StartupStatus = struct {
     workspace_root: []u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .xai,
     selected_model: []const u8,
     owned_selected_model: ?[]u8 = null,
     auth: auth_runtime.StatusSnapshot = .{},
@@ -1122,7 +1122,8 @@ fn configuredProviderSelection(
     default_model: []const u8,
     settings: *const config_runtime.Settings,
 ) !model_provider.ProviderSelection {
-    const provider = settings.provider orelse .gateway;
+    const raw = settings.provider orelse model_provider.default_id;
+    const provider = if (model_provider.isRetired(raw)) model_provider.default_id else raw;
     const model = switch (provider) {
         .gateway, .anthropic, .xai => settings.model orelse default_model,
         .codex => settings.codex_model orelse return error.CodexModelNotSelected,
@@ -1145,11 +1146,12 @@ fn resolveStartupSelection(
     var catalog = try direct_providers.loadFromHome(alloc);
     defer catalog.deinit();
     const process_model = initialModelId(default_model, configured.model);
+    const provider_explicit = if (settings.provider) |provider| !model_provider.isRetired(provider) else false;
     const overlaid = direct_providers.overlayStartupSelection(
         &catalog,
         .{ .provider = configured.provider, .model = configured.model },
         process_model,
-        settings.provider != null,
+        provider_explicit,
     );
     return .{
         .configured = configured,
@@ -1171,7 +1173,7 @@ test "startup provider chooses only its provider-scoped model" {
         .codex_model = @constCast("gpt-model"),
     };
     const gateway = try configuredProviderSelection("default/model", &gateway_settings);
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, gateway.provider);
+    try std.testing.expectEqual(model_provider.ProviderId.xai, gateway.provider);
     try std.testing.expectEqualStrings("gateway/model", gateway.model);
 
     const codex_settings = config_runtime.Settings{
@@ -2103,8 +2105,8 @@ test "loadStartupState applies core env overrides" {
     try std.testing.expectEqualStrings("default-model", state.configured_model);
     try std.testing.expectEqual(config_runtime.ModelSource.process_override, state.model_source);
     try std.testing.expect(!state.fast_mode);
-    try std.testing.expectEqualStrings("gateway-key", state.apiKey().?);
-    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, state.credential.?.source);
+    try std.testing.expect(state.apiKey() == null);
+    try std.testing.expect(state.credential == null);
     try std.testing.expectEqual(PermissionMode.auto, state.permission_mode);
     try std.testing.expectEqual(@as(usize, 37), state.agent_step_limit);
     try std.testing.expectEqual(sandbox.BackendKind.auto, state.sandbox_backend);

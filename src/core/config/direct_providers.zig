@@ -157,13 +157,28 @@ pub const Catalog = struct {
     }
 
     pub fn firstUsable(self: *const Catalog) ?ModelHit {
+        return self.preferredUsable();
+    }
+
+    pub fn preferredUsable(self: *const Catalog) ?ModelHit {
+        if (self.usableFor(.xai)) |hit| return hit;
+        if (self.usableFor(.anthropic)) |hit| return hit;
         for (self.entries) |*entry| {
-            if (entry.models.len == 0) continue;
-            if (!entry.isReady(self.alloc)) continue;
-            if (!isAllowedBaseUrl(entry.resolvedBaseUrl())) continue;
-            return .{ .provider = entry, .model_id = entry.models[0].id };
+            if (self.hitIfReady(entry)) |hit| return hit;
         }
         return null;
+    }
+
+    fn usableFor(self: *const Catalog, provider: model_provider.ProviderId) ?ModelHit {
+        const entry = self.findByProvider(provider) orelse return null;
+        return self.hitIfReady(entry);
+    }
+
+    fn hitIfReady(self: *const Catalog, entry: *const ProviderEntry) ?ModelHit {
+        if (entry.models.len == 0) return null;
+        if (!entry.isReady(self.alloc)) return null;
+        if (!isAllowedBaseUrl(entry.resolvedBaseUrl())) return null;
+        return .{ .provider = entry, .model_id = entry.models[0].id };
     }
 
     pub fn firstApiKeyUsable(self: *const Catalog) ?ModelHit {
@@ -293,7 +308,7 @@ pub fn overlayStartupSelection(
     if (catalog.findModel(process_model)) |hit| {
         return .{ .provider = hit.provider.provider, .model = hit.model_id };
     }
-    if (model_provider.isDirect(fallback.provider)) {
+    if (model_provider.isDirect(fallback.provider) and provider_explicit) {
         if (catalog.findByProvider(fallback.provider)) |entry| {
             if (entry.matchModel(process_model)) |model_id| {
                 return .{ .provider = entry.provider, .model = model_id };
@@ -304,17 +319,21 @@ pub fn overlayStartupSelection(
         }
         return .{ .provider = fallback.provider, .model = process_model };
     }
-    if (!provider_explicit) {
-        if (nonEmptyEnv("AI_GATEWAY_API_KEY") != null or nonEmptyEnv("VERCEL_OIDC_TOKEN") != null) {
-            return .{ .provider = fallback.provider, .model = process_model };
-        }
-        if (catalog.firstUsable()) |hit| {
+    const product_explicit = provider_explicit and !model_provider.isRetired(fallback.provider);
+    if (!product_explicit) {
+        if (catalog.preferredUsable()) |hit| {
             if (std.mem.eql(u8, process_model, fallback.model)) {
                 return .{ .provider = hit.provider.provider, .model = hit.model_id };
             }
         }
+        if (model_provider.isRetired(fallback.provider)) {
+            return .{ .provider = model_provider.default_id, .model = process_model };
+        }
     }
-    return .{ .provider = fallback.provider, .model = process_model };
+    return .{
+        .provider = if (model_provider.isRetired(fallback.provider)) model_provider.default_id else fallback.provider,
+        .model = process_model,
+    };
 }
 
 fn parseProvidersDocument(alloc: Allocator, bytes: []const u8) !Catalog {
@@ -571,14 +590,14 @@ test "startup overlay prefers FX_MODEL matches and usable direct providers" {
     try std.testing.expectEqualStrings("claude-opus-4-6", auto.model);
 
     try environ.put("AI_GATEWAY_API_KEY", "gateway-key");
-    const keep_gateway = overlayStartupSelection(
+    const ignore_gateway_key = overlayStartupSelection(
         &catalog,
         .{ .provider = .gateway, .model = "zai/glm-5.2" },
         "zai/glm-5.2",
         false,
     );
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, keep_gateway.provider);
-    try std.testing.expectEqualStrings("zai/glm-5.2", keep_gateway.model);
+    try std.testing.expectEqual(model_provider.ProviderId.anthropic, ignore_gateway_key.provider);
+    try std.testing.expectEqualStrings("claude-opus-4-6", ignore_gateway_key.model);
 
     const keep_env_model = overlayStartupSelection(
         &catalog,
@@ -586,7 +605,7 @@ test "startup overlay prefers FX_MODEL matches and usable direct providers" {
         "env-model",
         false,
     );
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, keep_env_model.provider);
+    try std.testing.expectEqual(model_provider.ProviderId.xai, keep_env_model.provider);
     try std.testing.expectEqualStrings("env-model", keep_env_model.model);
 }
 
@@ -643,7 +662,9 @@ test "endpoint joining and URL allowlist" {
     try std.testing.expectEqualStrings("https://api.x.ai/v1/chat/completions", xai);
 
     try std.testing.expect(isAllowedBaseUrl("https://api.anthropic.com"));
+    try std.testing.expect(isAllowedBaseUrl("https://cli-chat-proxy.grok.com/v1"));
     try std.testing.expect(isAllowedBaseUrl("http://127.0.0.1:1234"));
+    try std.testing.expect(isAllowedBaseUrl("http://localhost:4000"));
     try std.testing.expect(!isAllowedBaseUrl("http://example.com"));
     try std.testing.expect(!isAllowedBaseUrl("ftp://api.anthropic.com"));
 }

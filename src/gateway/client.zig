@@ -603,8 +603,46 @@ pub fn generationBaseUrl() []const u8 {
 }
 
 pub fn isTrustedGenerationOrigin(origin: []const u8) bool {
-    return std.mem.eql(u8, origin, default_gateway_base_url) or
-        isLoopbackHttpUrl(origin);
+    if (isVercelGatewayOrigin(origin)) return false;
+    if (isLoopbackHttpUrl(origin)) return true;
+    return isHttpsProductOrigin(origin);
+}
+
+fn originHostEquals(origin: []const u8, expected: []const u8) bool {
+    const uri = std.Uri.parse(origin) catch return false;
+    const host_component = uri.host orelse return false;
+    var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+    const host = host_component.toRaw(&host_buf) catch return false;
+    return std.ascii.eqlIgnoreCase(host, expected);
+}
+
+fn originHostEndsWith(origin: []const u8, suffix: []const u8) bool {
+    const uri = std.Uri.parse(origin) catch return false;
+    const host_component = uri.host orelse return false;
+    var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+    const host = host_component.toRaw(&host_buf) catch return false;
+    return std.ascii.endsWithIgnoreCase(host, suffix);
+}
+
+fn originSchemeIs(origin: []const u8, scheme: []const u8) bool {
+    const uri = std.Uri.parse(origin) catch return false;
+    return std.ascii.eqlIgnoreCase(uri.scheme, scheme);
+}
+
+fn isVercelGatewayOrigin(origin: []const u8) bool {
+    if (std.mem.eql(u8, std.mem.trimEnd(u8, origin, "/"), default_gateway_base_url)) return true;
+    return originHostEquals(origin, "ai-gateway.vercel.sh") or
+        originHostEquals(origin, "vercel.com") or
+        originHostEndsWith(origin, ".vercel.sh") or
+        originHostEndsWith(origin, ".vercel.com");
+}
+
+fn isHttpsProductOrigin(origin: []const u8) bool {
+    if (!originSchemeIs(origin, "https")) return false;
+    return originHostEquals(origin, "api.anthropic.com") or
+        originHostEquals(origin, "cli-chat-proxy.grok.com") or
+        originHostEquals(origin, "chatgpt.com") or
+        originHostEndsWith(origin, ".chatgpt.com");
 }
 
 pub fn postGatewayCompletion(
@@ -3817,6 +3855,16 @@ test "consumeSseStream keyless tracing handles oversized CRLF payloads" {
     try std.testing.expect(std.mem.find(u8, trace, "FX_OVERSIZED_REASONING_TAIL") == null);
     try std.testing.expect(std.mem.find(u8, trace, "FX_OVERSIZED_SIGNATURE") == null);
     try std.testing.expect(std.mem.find(u8, trace, "answer") == null);
+}
+
+test "trusted generation origins allow product hosts and reject Vercel" {
+    try std.testing.expect(isTrustedGenerationOrigin("https://api.anthropic.com"));
+    try std.testing.expect(isTrustedGenerationOrigin("https://cli-chat-proxy.grok.com/v1"));
+    try std.testing.expect(isTrustedGenerationOrigin("https://chatgpt.com/backend-api/codex"));
+    try std.testing.expect(isTrustedGenerationOrigin("http://127.0.0.1:3000"));
+    try std.testing.expect(!isTrustedGenerationOrigin("https://ai-gateway.vercel.sh"));
+    try std.testing.expect(!isTrustedGenerationOrigin("https://example.com"));
+    try std.testing.expect(!isTrustedGenerationOrigin("http://example.com"));
 }
 
 test "E2E gateway URL override accepts loopback HTTP only" {

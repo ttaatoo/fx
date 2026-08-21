@@ -1076,7 +1076,7 @@ const AskContext = struct {
 
     fn agentStreamProvider(self: *const AskContext) agent_stream_provider.Provider {
         return switch (self.provider) {
-            .gateway => self.cfg.gateway_provider.agent_stream,
+            .gateway => agent_stream_provider.unavailable_provider,
             .codex => self.cfg.codex_agent_stream orelse agent_stream_provider.unavailable_provider,
             .anthropic, .xai => @import("../../gateway/direct_provider.zig").agent_stream_provider,
         };

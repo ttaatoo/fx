@@ -2777,7 +2777,7 @@ fn visionFallbackMode(
     return .optional;
 }
 
-test "vision fallback is available only through Gateway" {
+test "vision fallback is available only through retired Gateway" {
     try std.testing.expectEqual(
         runtime_gateway_step.VisionToolMode.optional,
         visionFallbackMode(.gateway, true),
@@ -2789,6 +2789,14 @@ test "vision fallback is available only through Gateway" {
     try std.testing.expectEqual(
         runtime_gateway_step.VisionToolMode.unavailable,
         visionFallbackMode(.codex, true),
+    );
+    try std.testing.expectEqual(
+        runtime_gateway_step.VisionToolMode.unavailable,
+        visionFallbackMode(.xai, true),
+    );
+    try std.testing.expectEqual(
+        runtime_gateway_step.VisionToolMode.unavailable,
+        visionFallbackMode(.anthropic, true),
     );
 }
 

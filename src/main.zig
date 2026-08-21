@@ -54,6 +54,7 @@ const builtin_gateway = @import("builtins/gateway.zig");
 const builtin_providers = @import("builtins/providers.zig");
 const openai_codex_models = @import("gateway/openai_codex_models.zig");
 const openai_codex_permission_reviewer = @import("gateway/openai_codex_permission_reviewer.zig");
+const direct_provider = @import("gateway/direct_provider.zig");
 const gateway_provider = @import("core/gateway/gateway_provider.zig");
 const model_catalog = @import("core/gateway/model_catalog.zig");
 const generation_usage_provider = @import("core/session/generation_usage_provider.zig");
@@ -129,8 +130,6 @@ const web_search_runtime = @import("core/tooling/web_search_runtime.zig");
 const worker_runtime = @import("core/agent/worker_runtime.zig");
 const question_prompt = @import("core/agent/question_prompt.zig");
 const gateway_client = @import("gateway/client.zig");
-const js_host_stream_provider = @import("gateway/js_host_stream_provider.zig");
-const js_host_model_catalog = @import("gateway/js_host_model_catalog.zig");
 const url_opener = @import("core/hosts/url_opener.zig");
 const event_loop = @import("ui/event_loop.zig");
 const wasm_terminal = if (host_target.is_wasm) @import("ui/terminal/wasm_terminal.zig") else struct {};
@@ -187,7 +186,16 @@ const idle_wasm_poll_timeout_ms: i32 = 16;
 const resize_debounce_ms: i64 = 100;
 const max_transcript_bytes: usize = 256 * 1024;
 const default_max_agent_steps: usize = agent_steps.default_max_agent_steps;
-const native_gateway_provider = builtin_gateway.provider;
+const native_gateway_provider = gateway_provider.Provider{
+    .agent_stream = agent_stream_provider.unavailable_provider,
+    .oauth_transport = builtin_gateway.oauth_transport_provider,
+    .chat_url = builtin_gateway.chat_url_provider,
+    .cli_model_catalog = direct_provider.cli_model_catalog_provider,
+    .credits = builtin_gateway.credits_provider,
+    .generation_usage = generation_usage_provider.unavailable_provider,
+    .web_search = builtin_gateway.default_web_search_provider,
+    .model_catalog = direct_provider.model_catalog_provider,
+};
 const max_history_turns: usize = 8;
 const max_list_entries: usize = 100;
 const max_read_file_bytes: usize = 50 * 1024;
@@ -508,7 +516,7 @@ const App = struct {
     agent_step_limit: usize = default_max_agent_steps,
     web_fetch_runtime: web_fetch_runtime.Runtime = web_fetch_runtime.Runtime.init(.{}),
     web_search_runtime: web_search_runtime.Runtime = web_search_runtime.Runtime.init(.{
-        .provider = if (host_profile.web_search) builtin_gateway.default_web_search_provider else null,
+        .provider = null,
     }),
     web_search_models_path: []const u8 = builtin_gateway.models_path,
     lifecycle_runtime: hooks.Runtime = hooks.Runtime.init(std.heap.c_allocator),
@@ -518,10 +526,7 @@ const App = struct {
 
     session: SessionRuntime = SessionRuntime.init(
         max_history_turns,
-        if (host_profile.generation_usage)
-            builtin_gateway.generation_usage_provider
-        else
-            generation_usage_provider.unavailable_provider,
+        generation_usage_provider.unavailable_provider,
     ),
     session_persistence: app_session_runtime.Persistence = .{},
     prompt_history: PromptHistoryRuntime = .{},
@@ -1591,14 +1596,8 @@ const App = struct {
     pub fn subagentProviderRoutes(_: *const App) subagent_agent_adapter.ProviderRoutes {
         return .{
             .gateway = .{
-                .agent_stream_provider = if (comptime host_target.is_wasm)
-                    js_host_stream_provider.provider()
-                else
-                    builtin_providers.agentStream(.gateway),
-                .permission_reviewer_provider = if (comptime host_profile.tools)
-                    builtin_gateway.permission_reviewer.provider
-                else
-                    null,
+                .agent_stream_provider = agent_stream_provider.unavailable_provider,
+                .permission_reviewer_provider = null,
             },
             .codex = .{
                 .agent_stream_provider = if (comptime host_target.is_wasm)
@@ -1752,10 +1751,7 @@ const App = struct {
     pub fn fetchModelIds(self: *App) !std.ArrayList([]u8) {
         return AgentAppRuntime.fetchModelIds(
             self,
-            if (comptime host_target.is_wasm)
-                js_host_model_catalog.provider
-            else
-                builtin_providers.modelCatalog(self.provider_selection.selection().provider),
+            builtin_providers.modelCatalog(self.provider_selection.selection().provider),
             builtin_gateway.models_path,
         );
     }
@@ -1767,7 +1763,7 @@ const App = struct {
                 return;
             }
             self.model_cache.loadCooperative(
-                js_host_model_catalog.provider,
+                builtin_providers.modelCatalog(self.provider_selection.selection().provider),
                 self.auth.modelCatalogAccess(),
             );
         } else {
@@ -3295,7 +3291,7 @@ fn fullEntryConfig() app_entry_runtime.Config {
         .load_mcp_runtime = builtin_mcp.loadRuntime,
         .acp_runner = .{ .run_fn = runAcpServer },
         .devbox_provider = builtin_devbox.provider,
-        .permission_reviewer_provider = builtin_gateway.permission_reviewer.provider,
+        .permission_reviewer_provider = null,
         .codex_permission_reviewer_provider = openai_codex_permission_reviewer.provider,
     };
 }

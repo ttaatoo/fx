@@ -1,56 +1,14 @@
-# Direct LLM providers (fork experiment)
+# Providers on this fork
 
-This `ttaatoo/fx` fork can talk to Anthropic and SuperGrok without Vercel AI Gateway. Upstream fx still requires Gateway or a Codex subscription. Treat this path as an experiment, not a supported product surface.
+This `ttaatoo/fx` fork talks to SuperGrok and Anthropic directly. It does not use Vercel AI Gateway, Vercel login, Gateway API keys, Gateway credits, Vercel teams, or Vercel OIDC.
 
-## Anthropic Messages
+## Default provider
 
-Write Anthropic settings in `~/.fx/providers.json` (preferred) or under a `providers` object in `~/.fx/settings.json`. Do not put API keys in project `.fx.json`.
+1. SuperGrok, when `~/.fx/grok-auth.json` or `~/.grok/auth.json` exists.
+2. Anthropic, when `~/.fx/providers.json` (or `providers` in `~/.fx/settings.json`) is ready with a key.
+3. Otherwise fx asks you to run `fx login grok`.
 
-```json
-{
-  "providers": {
-    "anthropic": {
-      "api": "anthropic-messages",
-      "baseUrl": "https://api.anthropic.com",
-      "apiKey": "$ANTHROPIC_API_KEY",
-      "models": [{ "id": "claude-opus-4-6" }, { "id": "claude-sonnet-4-6" }]
-    }
-  }
-}
-```
-
-`apiKey` may be a literal, `$ENV_NAME`, or `${ENV_NAME}`. Empty environment values are treated as missing. `baseUrl` may also come from `ANTHROPIC_BASE_URL` when the config omits it.
-
-HTTPS hosts are allowed. HTTP is limited to loopback (`127.0.0.1`, `localhost`, `[::1]`).
-
-| Setting | Value |
-| --- | --- |
-| Key | `ANTHROPIC_API_KEY` |
-| Optional base URL | `ANTHROPIC_BASE_URL` |
-| Default API | `anthropic-messages` at `/v1/messages` |
-
-Select a model with `FX_MODEL=claude-opus-4-6` or `FX_MODEL=anthropic/claude-opus-4-6`. `fx provider anthropic` persists the provider in `~/.fx/settings.json`. `/model` lists models from this config, not the Vercel catalog.
-
-When Anthropic is selected, fx does not require Vercel login and does not send `AI_GATEWAY_API_KEY` or Vercel OAuth tokens to that host. Credits, teams, OIDC, Gateway web search, and Gateway auto-review are skipped.
-
-### Claude Code proxy
-
-Point Anthropic `baseUrl` at a Claude Code or Anthropic-compatible proxy:
-
-```json
-{
-  "providers": {
-    "anthropic": {
-      "api": "anthropic-messages",
-      "baseUrl": "http://127.0.0.1:4000",
-      "apiKey": "$ANTHROPIC_API_KEY",
-      "models": [{ "id": "claude-opus-4-6" }]
-    }
-  }
-}
-```
-
-Or set `ANTHROPIC_BASE_URL` and leave `baseUrl` empty in the config. Official Anthropic uses `https://api.anthropic.com`.
+`fx login`, `fx login vercel`, `fx setup`, `fx teams`, and `fx credits` do not talk to Vercel. `AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN` are ignored.
 
 ## SuperGrok / X Premium+
 
@@ -62,13 +20,11 @@ SuperGrok uses a subscriber OAuth session, not an `XAI_API_KEY` and not console.
 fx login grok
 ```
 
-`fx login xai` and `fx login supergrok` are aliases. fx starts the official xAI device-code flow (`accounts.x.ai` / `auth.x.ai`, the same issuer the Grok CLI uses for `grok login`), prints a URL and code, and waits for authorization. The session is stored at `~/.fx/grok-auth.json` and refresh tokens are renewed in the background.
+`fx login xai` and `fx login supergrok` are aliases. Bare `fx login` starts SuperGrok. fx starts the official xAI device-code flow (`accounts.x.ai` / `auth.x.ai`, the same issuer the Grok CLI uses for `grok login`), prints a URL and code, and waits for authorization. The session is stored at `~/.fx/grok-auth.json` and refresh tokens are renewed in the background.
 
 If you already ran `grok login`, fx also reads `~/.grok/auth.json` (or `$GROK_HOME/auth.json`). `fx logout grok` removes only `~/.fx/grok-auth.json`. To clear the Grok CLI store as well, run `grok logout`.
 
-`/login` in the TUI includes **Sign in with SuperGrok**. `/provider xai` or `fx provider xai` starts this login when no session is present.
-
-When SuperGrok is selected, fx does not require Vercel login.
+`/login` in the TUI starts with **Sign in with SuperGrok**. `/provider xai` or `fx provider xai` starts this login when no session is present.
 
 ### Models
 
@@ -98,3 +54,62 @@ A configured `baseUrl` of `https://api.x.ai/v1` is rewritten to that proxy. Over
 ### Known caveat
 
 Some SuperGrok tiers are rejected by the xAI developer API (`api.x.ai`) even after a successful OAuth login. That is expected. This fork uses the subscriber CLI chat proxy and SuperGrok / X Premium+ quota, not API credits. If the proxy also rejects the session, renew it with `fx login grok` or `grok login`, and confirm the X account still has SuperGrok or X Premium+.
+
+## Anthropic Messages
+
+Write Anthropic settings in `~/.fx/providers.json` (preferred) or under a `providers` object in `~/.fx/settings.json`. Do not put API keys in project `.fx.json`.
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKey": "$ANTHROPIC_API_KEY",
+      "models": [{ "id": "claude-opus-4-6" }, { "id": "claude-sonnet-4-6" }]
+    }
+  }
+}
+```
+
+`apiKey` may be a literal, `$ENV_NAME`, or `${ENV_NAME}`. Empty environment values are treated as missing. `baseUrl` may also come from `ANTHROPIC_BASE_URL` when the config omits it.
+
+HTTPS hosts are allowed. HTTP is limited to loopback (`127.0.0.1`, `localhost`, `[::1]`).
+
+| Setting | Value |
+| --- | --- |
+| Key | `ANTHROPIC_API_KEY` |
+| Optional base URL | `ANTHROPIC_BASE_URL` |
+| Default API | `anthropic-messages` at `/v1/messages` |
+
+Select a model with `FX_MODEL=claude-opus-4-6` or `FX_MODEL=anthropic/claude-opus-4-6`. `fx provider anthropic` persists the provider in `~/.fx/settings.json`. `/model` lists models from this config.
+
+### Claude Code proxy
+
+Point Anthropic `baseUrl` at a Claude Code or Anthropic-compatible proxy:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "api": "anthropic-messages",
+      "baseUrl": "http://127.0.0.1:4000",
+      "apiKey": "$ANTHROPIC_API_KEY",
+      "models": [{ "id": "claude-opus-4-6" }]
+    }
+  }
+}
+```
+
+Or set `ANTHROPIC_BASE_URL` and leave `baseUrl` empty in the config. Official Anthropic uses `https://api.anthropic.com`.
+
+## Codex
+
+`fx login codex` is an optional ChatGPT subscription login. It talks to OpenAI directly and does not send tokens to Vercel. If you do not use ChatGPT, ignore this path.
+
+## What this fork removed
+
+- Vercel AI Gateway chat, catalog, credits, teams, and OIDC
+- `fx login vercel` / `fx setup` API-key onboarding
+- Gateway web search and Gateway auto-review
+- Docs and help that tell you Gateway login is required

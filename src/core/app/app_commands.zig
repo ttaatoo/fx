@@ -1615,38 +1615,10 @@ pub fn Handlers(comptime App: type) type {
 
         fn commandShowCredits(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime provider_runtime.supported(App)) {
-                if (model_provider.isDirect(provider_runtime.provider(app))) {
-                    try app.writeDomainNotice(.{
-                        .topic = "credits",
-                        .tone = .warning,
-                        .body = "Credits are a Vercel AI Gateway feature and are unavailable for direct providers.",
-                    }, true);
-                    return;
-                }
-            }
-            var snapshot = app.creditsProvider().fetch(app.alloc, .{
-                .credential = app.auth.apiKey(),
-                .credential_source = if (comptime @hasDecl(@TypeOf(app.auth), "credentialSource"))
-                    app.auth.credentialSource()
-                else
-                    null,
-                .tenant = app.auth.gatewayTeam(),
-            });
-            defer snapshot.deinit(app.alloc);
-            const text = snapshot.renderInteractiveBody(app.alloc) catch {
-                try app.writeDomainNotice(.{
-                    .topic = "credits",
-                    .tone = .@"error",
-                    .body = "Failed to render credits.",
-                }, true);
-                return;
-            };
-            defer app.alloc.free(text);
             try app.writeDomainNotice(.{
                 .topic = "credits",
-                .tone = if (snapshot.err_message == null) .neutral else .@"error",
-                .body = text,
+                .tone = .warning,
+                .body = "Credits are not available. This fork uses SuperGrok or Anthropic instead of Vercel AI Gateway.",
             }, true);
         }
 

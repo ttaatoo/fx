@@ -1111,7 +1111,7 @@ pub fn writeProviderConfigOption(
 ) !void {
     try w.writeAll("{\"id\":\"provider\",\"name\":\"Provider\",\"category\":\"model\",\"type\":\"select\",\"currentValue\":");
     try writeJsonStr(@tagName(current), w);
-    try w.writeAll(",\"options\":[{\"value\":\"gateway\",\"name\":\"Vercel AI Gateway\"},{\"value\":\"codex\",\"name\":\"Codex subscription\"}]}");
+    try w.writeAll(",\"options\":[{\"value\":\"xai\",\"name\":\"SuperGrok\"},{\"value\":\"anthropic\",\"name\":\"Anthropic Messages\"},{\"value\":\"codex\",\"name\":\"Codex subscription\"}]}");
 }
 
 pub fn writeModeConfigOption(
