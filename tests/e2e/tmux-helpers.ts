@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { FX_BIN, REPO_ROOT } from "../evals/eval-helpers";
 import {
   FAKE_DIRECT_MODEL,
+  SUPERGROK_MODEL,
   adaptRetiredGatewayTestEnv,
   ensureTuiSupergrokHome,
 } from "./direct-provider-env";
@@ -20,6 +21,7 @@ import {
 let sessionCounter = 0;
 
 export const FAKE_GATEWAY_MODEL = FAKE_DIRECT_MODEL;
+export { SUPERGROK_MODEL };
 const TMUX_CAPTURE_MAX_BUFFER = 32 * 1024 * 1024;
 const TMUX_HEX_CHUNK_BYTES = 256;
 const COMPOSER_LINE = /^[ \t]*(?:┃|❯|>)(?:[ \t]|$)/;
@@ -318,6 +320,61 @@ export function openAiSseStop(): string {
 
 const fakeCompletionEvents = new WeakMap<Response, object[]>();
 
+type StreamingTextJob = {
+  lines: string[];
+  delayMs: number;
+  holdBefore?: Promise<void>;
+  holdAfter?: Promise<void>;
+};
+
+const fakeStreamingJobs = new WeakMap<Response, StreamingTextJob>();
+
+export function requestHasToolCallId(body: string, id: string): boolean {
+  return body.includes(`"toolCallId":"${id}"`) ||
+    body.includes(`"tool_call_id":"${id}"`) ||
+    body.includes(`"tool_use_id":"${id}"`);
+}
+
+function toolResultContentText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(toolResultContentText).join("");
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return [
+      toolResultContentText(object.text),
+      toolResultContentText(object.value),
+      toolResultContentText(object.content),
+      toolResultContentText(object.output),
+    ].join("");
+  }
+  return "";
+}
+
+export function toolResultOutputFromBody(body: string, callId: string): string {
+  const request = JSON.parse(body) as {
+    prompt?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
+    messages?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
+  };
+  const messages = request.prompt ?? request.messages ?? [];
+  const parts = messages.flatMap((message) =>
+    Array.isArray(message.content) ? message.content : []
+  ) as Array<Record<string, unknown>>;
+  const result = parts.find((part) =>
+    (part.type === "tool-result" && part.toolCallId === callId) ||
+    (part.type === "tool_result" && part.tool_use_id === callId)
+  );
+  if (result) {
+    const output = result.output as Record<string, unknown> | undefined;
+    if (typeof output?.value === "string") return output.value;
+    return toolResultContentText(result.content ?? result.output);
+  }
+  const toolMessage = messages.find((message) =>
+    message.role === "tool" && message.tool_call_id === callId
+  );
+  if (!toolMessage) throw new Error(`Missing tool result for ${callId}`);
+  return toolResultContentText(toolMessage.content);
+}
+
 export function fakeGatewaySse(events: object[]) {
   const response = new Response(anthropicSseFromLegacyEvents(events), {
     headers: { "content-type": "text/event-stream" },
@@ -326,7 +383,71 @@ export function fakeGatewaySse(events: object[]) {
   return response;
 }
 
+function streamingTextResponse(path: string, job: StreamingTextJob): Response {
+  const openai = path.includes("chat/completions");
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          if (job.holdBefore) await job.holdBefore;
+          if (openai) {
+            for (const line of job.lines) {
+              controller.enqueue(encoder.encode(openAiSseTextDelta(`${line}\n`)));
+              if (job.delayMs > 0) await sleep(job.delayMs);
+            }
+            if (job.holdAfter) await job.holdAfter;
+            controller.enqueue(encoder.encode(openAiSseStop()));
+          } else {
+            if (job.delayMs > 0) {
+              await sleep(job.delayMs * job.lines.length);
+            }
+            if (job.holdAfter) await job.holdAfter;
+            const events = [
+              ...job.lines.map((line) => ({
+                type: "text-delta",
+                id: "answer_1",
+                delta: `${line}\n`,
+              })),
+              {
+                type: "finish",
+                finishReason: { unified: "stop", raw: "stop" },
+              },
+            ];
+            controller.enqueue(encoder.encode(anthropicSseFromLegacyEvents(events)));
+          }
+        } finally {
+          controller.close();
+        }
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+}
+
+export function fakeGatewayStreamingText(
+  lines: string[],
+  delayMs = 0,
+  options: {
+    holdBefore?: Promise<void>;
+    holdAfter?: Promise<void>;
+  } = {},
+): Response {
+  const response = new Response("streaming-text", {
+    headers: { "content-type": "text/event-stream" },
+  });
+  fakeStreamingJobs.set(response, {
+    lines,
+    delayMs,
+    holdBefore: options.holdBefore,
+    holdAfter: options.holdAfter,
+  });
+  return response;
+}
+
 export function completionResponseForPath(path: string, response: Response): Response {
+  const streaming = fakeStreamingJobs.get(response);
+  if (streaming) return streamingTextResponse(path, streaming);
   const events = fakeCompletionEvents.get(response);
   if (!events) return response;
   if (path.includes("chat/completions")) {
@@ -608,13 +729,19 @@ export function startFakeGateway(
   responses: FakeGatewayResponse[],
   options: FakeGatewayOptions = {},
 ) {
-  return serveFakeGateway(async (body) => {
+  const server = serveFakeGateway(async (body) => {
     const next = responses.shift();
     if (!next) {
       return new Response("unexpected request", { status: 500 });
     }
     return typeof next === "function" ? await next(body) : next;
   }, options);
+  return {
+    ...server,
+    remainingResponseCount() {
+      return responses.length;
+    },
+  };
 }
 
 // Same server and classifier handling as startFakeGateway, but every

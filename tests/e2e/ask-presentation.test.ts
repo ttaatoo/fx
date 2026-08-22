@@ -13,11 +13,12 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
+  SUPERGROK_MODEL,
   fakeGatewayFinalText,
   fakeGatewayPermissionDecision,
   fakeGatewaySse,
   fakeGatewaySerializedToolCall,
+  fakeGatewayStreamingText,
   fakeGatewayToolCall,
   startDynamicFakeGateway,
   startFakeGateway,
@@ -86,7 +87,7 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_DISABLE_KEYCHAIN: "1",
     FX_SKIP_ONBOARDING: "1",
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    FX_MODEL: SUPERGROK_MODEL,
     FX_PERMISSION_MODE: "yolo",
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
@@ -104,36 +105,13 @@ function terminalCommand(args: string[]): string {
   return `/bin/sh -c ${shellQuote(script)}`;
 }
 
-function fakeGatewayStreamingText(lines: string[], delayMs: number) {
-  const encoder = new TextEncoder();
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      async start(controller) {
-        for (const line of lines) {
-          controller.enqueue(encoder.encode(
-            `data: ${JSON.stringify({
-              type: "text-delta",
-              id: "answer_1",
-              delta: `${line}\n`,
-            })}\n\n`,
-          ));
-          if (delayMs > 0) await Bun.sleep(delayMs);
-        }
-        controller.enqueue(encoder.encode(
-          `data: ${JSON.stringify({
-            type: "finish",
-            finishReason: { unified: "stop", raw: "stop" },
-            usage: {
-              inputTokens: { total: 3 },
-              outputTokens: { total: lines.length },
-            },
-          })}\n\ndata: [DONE]\n\n`,
-        ));
-        controller.close();
-      },
-    }),
-    { headers: { "content-type": "text/event-stream" } },
-  );
+const YOLO_STDERR = "YOLO enabled: permissions and sandboxing disabled";
+
+function quietStderr(stderr: string): string {
+  return stderr
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0 && line !== YOLO_STDERR)
+    .join("\n");
 }
 
 describe("fx ask presentation", () => {
@@ -274,7 +252,7 @@ describe("fx ask presentation", () => {
     expect(gateway.requests).toHaveLength(7);
 
     const firstRequest = JSON.parse(gateway.requests[0]!.body) as {
-      tools: Array<{
+      tools?: Array<{
         name?: string;
         description?: string;
         inputSchema?: {
@@ -285,9 +263,27 @@ describe("fx ask presentation", () => {
           required?: string[];
           additionalProperties?: boolean;
         };
+        type?: string;
+        function?: {
+          name?: string;
+          description?: string;
+          parameters?: {
+            properties?: Record<string, {
+              enum?: string[];
+              description?: string;
+            }>;
+            required?: string[];
+            additionalProperties?: boolean;
+          };
+        };
       }>;
     };
-    const terminalTool = firstRequest.tools.find(({ name }) => name === "terminal");
+    const advertisedTools = (firstRequest.tools ?? []).map((tool) => ({
+      name: tool.function?.name ?? tool.name,
+      description: tool.function?.description ?? tool.description,
+      inputSchema: tool.function?.parameters ?? tool.inputSchema,
+    }));
+    const terminalTool = advertisedTools.find(({ name }) => name === "terminal");
     expect(terminalTool?.description).toBe(
       "Run one captured command and return its result.",
     );
@@ -334,7 +330,10 @@ describe("fx ask presentation", () => {
       "terminal arguments must match the advertised action schema",
     );
     expect(gateway.requests[5]!.body).not.toContain("tool_permission_denied");
-    expect(gateway.requests[5]!.body).toContain('"request"');
+    expect(
+      gateway.requests[5]!.body.includes('"request"') ||
+        gateway.requests[5]!.body.includes('\\"request\\"'),
+    ).toBe(true);
     expect(existsSync(nestedExecMarker)).toBe(false);
     expect(gateway.requests[6]!.body).toContain("neighbor-exec");
     expect(
@@ -403,7 +402,7 @@ describe("fx ask presentation", () => {
     expect(raw.code).toBe(0);
     expect(raw.stdout).toBe(MARKDOWN);
     expect(raw.stdout).not.toContain("\x1b");
-    expect(raw.stderr).toBe("");
+    expect(quietStderr(raw.stderr)).toBe("");
 
     const jsonGateway = startFakeGateway([fakeGatewayFinalText(MARKDOWN)]);
     gateways.push(jsonGateway);
@@ -419,7 +418,7 @@ describe("fx ask presentation", () => {
     expect(json.code).toBe(0);
     expect(JSON.parse(json.stdout).output).toBe(MARKDOWN);
     expect(json.stdout).not.toContain("\x1b");
-    expect(json.stderr).toBe("");
+    expect(quietStderr(json.stderr)).toBe("");
   }, TIMEOUT);
 
   test.skipIf(!tmuxAvailable())(
@@ -519,7 +518,7 @@ describe("fx ask presentation", () => {
       expect(pane).toContain("Listing memories");
       expect(pane).not.toContain("1 write");
       expect(pane).not.toContain("Remembered list");
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      expect(quietStderr(readFileSync(stderrPath, "utf8"))).toBe("");
     },
     TIMEOUT,
   );
@@ -591,7 +590,7 @@ describe("fx ask presentation", () => {
       const escaped = await session.captureFullScrollbackEscapes();
       expect(escaped).toContain("\x1b[38;5;238mconst\x1b[39m");
       expect(escaped).not.toContain("\x1b[38;5;252mconst\x1b[39m");
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      expect(quietStderr(readFileSync(stderrPath, "utf8"))).toBe("");
     },
     TIMEOUT,
   );
@@ -649,7 +648,7 @@ describe("fx ask presentation", () => {
         expect(index, line).toBeGreaterThan(previousIndex);
         previousIndex = index;
       }
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      expect(quietStderr(readFileSync(stderrPath, "utf8"))).toBe("");
     },
     TIMEOUT,
   );
@@ -670,38 +669,12 @@ describe("fx ask presentation", () => {
       const responseGate = new Promise<void>((resolve) => {
         releaseResponse = resolve;
       });
-      const gateway = startDynamicFakeGateway(() => {
-        const encoder = new TextEncoder();
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            async start(controller) {
-              await outputGate;
-              for (const line of answerLines) {
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: "text-delta",
-                    id: "answer_1",
-                    delta: `${line}\n`,
-                  })}\n\n`,
-                ));
-              }
-              await responseGate;
-              controller.enqueue(encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "finish",
-                  finishReason: { unified: "stop", raw: "stop" },
-                  usage: {
-                    inputTokens: { total: 3 },
-                    outputTokens: { total: answerLines.length },
-                  },
-                })}\n\ndata: [DONE]\n\n`,
-              ));
-              controller.close();
-            },
-          }),
-          { headers: { "content-type": "text/event-stream" } },
-        );
-      });
+      const gateway = startDynamicFakeGateway(() =>
+        fakeGatewayStreamingText(answerLines, 0, {
+          holdBefore: outputGate,
+          holdAfter: responseGate,
+        }),
+      );
       gateways.push(gateway);
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
@@ -766,7 +739,7 @@ describe("fx ask presentation", () => {
       for (const line of answerLines) {
         expect(finalScrollback.split(line)).toHaveLength(2);
       }
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      expect(quietStderr(readFileSync(stderrPath, "utf8"))).toBe("");
     },
     TIMEOUT,
   );
@@ -814,7 +787,7 @@ describe("fx ask presentation", () => {
         expect(scrollback.split(marker)).toHaveLength(2);
         previousIndex = index;
       }
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      expect(quietStderr(readFileSync(stderrPath, "utf8"))).toBe("");
     },
     TIMEOUT,
   );

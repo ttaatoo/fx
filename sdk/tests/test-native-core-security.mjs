@@ -4,11 +4,13 @@ import { createRequire } from "node:module";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SUPERGROK_MODEL, createSdkHome } from "./supergrok-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const addonPath = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/lib/libfx.node"));
 const addon = require(addonPath);
+const home = createSdkHome();
 
 function fdCount() {
   try { return readdirSync("/dev/fd").length; } catch { return null; }
@@ -28,17 +30,28 @@ if (beforeFds !== null && afterFds !== null) assert.ok(afterFds - beforeFds < 4,
 
 const runtimeLimitProbe = Array.from({ length: 64 }, () => addon.createCore({
   apiKey: "runtime-limit-key",
-  home: process.cwd(),
-  workspaceRoot: process.cwd(),
+  model: SUPERGROK_MODEL,
+  home,
+  workspaceRoot: home,
 }));
 assert.throws(
-  () => addon.createCore({ apiKey: "runtime-limit-key", home: process.cwd(), workspaceRoot: process.cwd() }),
+  () => addon.createCore({
+    apiKey: "runtime-limit-key",
+    model: SUPERGROK_MODEL,
+    home,
+    workspaceRoot: home,
+  }),
   (error) => error.code === "LIBFX_NATIVE_LIMIT",
 );
 for (const handle of runtimeLimitProbe) addon.closeCore(handle);
 for (const handle of runtimeLimitProbe) addon.destroyCore(handle);
 
-const core = addon.createCore({ apiKey: "security-test-key", home: process.cwd(), workspaceRoot: process.cwd() });
+const core = addon.createCore({
+  apiKey: "security-test-key",
+  model: SUPERGROK_MODEL,
+  home,
+  workspaceRoot: home,
+});
 let nextId = 1;
 function send(method, params) {
   const id = nextId++;

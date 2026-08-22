@@ -4,10 +4,12 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { SUPERGROK_MODEL, createSdkHome } from "./supergrok-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const addonPath = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/lib/libfx.node"));
+const home = createSdkHome();
 
 function runWorker(index) {
   return new Promise((resolveWorker, reject) => {
@@ -16,8 +18,9 @@ function runWorker(index) {
       const addon = require(workerData.addonPath);
       const core = addon.createCore({
         apiKey: "worker-test-key",
-        home: process.cwd(),
-        workspaceRoot: process.cwd(),
+        model: workerData.model,
+        home: workerData.home,
+        workspaceRoot: workerData.home,
       });
       addon.writeCore(core, Buffer.from(JSON.stringify({
         jsonrpc: "2.0",
@@ -33,7 +36,7 @@ function runWorker(index) {
       addon.closeCore(core);
       addon.destroyCore(core);
       parentPort.postMessage(output);
-    `, { eval: true, workerData: { addonPath, index } });
+    `, { eval: true, workerData: { addonPath, index, home, model: SUPERGROK_MODEL } });
     worker.once("message", (output) => resolveWorker(output));
     worker.once("error", reject);
     worker.once("exit", (code) => {
@@ -48,8 +51,9 @@ for (const output of outputs) assert.match(output, /"result"/);
 const addon = require(addonPath);
 const localCores = Array.from({ length: 3 }, () => addon.createCore({
   apiKey: "same-env-test-key",
-  home: process.cwd(),
-  workspaceRoot: process.cwd(),
+  model: SUPERGROK_MODEL,
+  home,
+  workspaceRoot: home,
 }));
 for (const core of localCores) addon.closeCore(core);
 for (const core of localCores) addon.destroyCore(core);
@@ -57,7 +61,12 @@ for (const core of localCores) addon.destroyCore(core);
 let finalized = false;
 const registry = new FinalizationRegistry(() => { finalized = true; });
 {
-  let abandoned = addon.createCore({ apiKey: "gc-test-key", home: process.cwd(), workspaceRoot: process.cwd() });
+  let abandoned = addon.createCore({
+    apiKey: "gc-test-key",
+    model: SUPERGROK_MODEL,
+    home,
+    workspaceRoot: home,
+  });
   registry.register(abandoned, "abandoned");
   abandoned = null;
 }

@@ -12,94 +12,27 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EVAL_MODEL, HAS_API_KEY, runFx } from "../evals/eval-helpers";
+import {
+  SUPERGROK_MODEL,
+  fakeGatewayFinalText,
+  fakeGatewayToolCall,
+  requestHasToolCallId,
+  startFakeGateway as startSharedFakeGateway,
+  toolResultOutputFromBody,
+} from "./tmux-helpers";
 
 const TIMEOUT = 20_000;
-const MODEL = "openai/gpt-5";
+const MODEL = SUPERGROK_MODEL;
 const darwinTest = test.skipIf(process.platform !== "darwin");
 const liveTest = test.skipIf(
   !HAS_API_KEY || process.env.FX_E2E_REAL_API !== "1",
 );
 
-type GatewayRequest = {
-  body: string;
-};
-
-type GatewayResponse =
-  | Response
-  | ((body: string) => Response | Promise<Response>);
-
-function sse(events: object[]) {
-  return new Response(
-    events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") +
-      "data: [DONE]\n\n",
-    { headers: { "content-type": "text/event-stream" } },
-  );
-}
-
-function toolCall(id: string, name: string, input: object) {
-  return sse([
-    {
-      type: "tool-call",
-      toolCallId: id,
-      toolName: name,
-      input,
-    },
-    {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "tool-calls" },
-    },
-  ]);
-}
-
-function permissionDecision(decision: "allow" | "ask" = "allow") {
-  return toolCall("permission_decision_1", "permission_decision", {
-    risk: decision === "allow" ? "medium" : "high",
-    authorization: decision === "allow" ? "high" : "low",
-    decision,
-    rationale: "test fixture",
-  });
-}
-
-function finalText(text: string) {
-  return sse([
-    { type: "text-delta", id: "answer_1", delta: text },
-    {
-      type: "finish",
-      finishReason: { unified: "stop", raw: "stop" },
-      usage: {
-        inputTokens: { total: 11 },
-        outputTokens: { total: 13 },
-      },
-    },
-  ]);
-}
-
-function contentText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map(contentText).join("");
-  if (content && typeof content === "object") {
-    const value = content as Record<string, unknown>;
-    return [
-      contentText(value.text),
-      contentText(value.value),
-      contentText(value.content),
-    ].join("");
-  }
-  return "";
-}
+const toolCall = fakeGatewayToolCall;
+const finalText = fakeGatewayFinalText;
 
 function toolResultOutput(body: string, callId: string): string {
-  const request = JSON.parse(body) as {
-    prompt: Array<{ content: unknown }>;
-  };
-  const parts = request.prompt.flatMap((message) =>
-    Array.isArray(message.content) ? message.content : []
-  ) as Array<Record<string, unknown>>;
-  const result = parts.find((part) =>
-    part.type === "tool-result" && part.toolCallId === callId
-  );
-  if (!result) throw new Error(`Missing tool result for ${callId}`);
-  return contentText(result.output);
+  return toolResultOutputFromBody(body, callId);
 }
 
 function occurrenceCount(text: string, needle: string) {
@@ -114,7 +47,7 @@ function firstCallToolResponses(args: {
   expectedResultOutput: string[];
   finalMessage: string;
   beforeToolCall?: () => void;
-}): GatewayResponse[] {
+}): Array<Response | ((body: string) => Response | Promise<Response>)> {
   return [
     (body) => {
       expect(body).not.toContain("target outside workspace");
@@ -140,47 +73,13 @@ function firstCallToolResponses(args: {
 }
 
 function startFakeGateway(
-  responses: GatewayResponse[],
+  responses: Array<Response | ((body: string) => Response | Promise<Response>)>,
   options: { classifierDecision?: "allow" | "ask" } = {},
 ) {
-  const requests: GatewayRequest[] = [];
-  const classifierRequests: GatewayRequest[] = [];
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/coding-agent/v1/models") {
-        return Response.json({
-          data: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-        });
-      }
-      if (req.method !== "POST") return new Response("not found", { status: 404 });
-      const body = await req.text();
-      if (body.includes("\"permission_decision\"")) {
-        classifierRequests.push({ body });
-        return permissionDecision(options.classifierDecision);
-      }
-      requests.push({ body });
-      const response = responses.shift();
-      if (!response) {
-        return new Response("unexpected Gateway request", { status: 500 });
-      }
-      return typeof response === "function" ? response(body) : response;
-    },
+  return startSharedFakeGateway(responses, {
+    ...options,
+    models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
   });
-
-  return {
-    baseUrl: `http://127.0.0.1:${server.port}`,
-    chatUrl: `http://127.0.0.1:${server.port}/v3/ai/language-model`,
-    requests,
-    classifierRequests,
-    remainingResponseCount() {
-      return responses.length;
-    },
-    stop() {
-      server.stop(true);
-    },
-  };
 }
 
 function createIsolatedRoot() {
@@ -352,7 +251,9 @@ async function runFirstCallToolScenario(args: {
     expect(gateway.remainingResponseCount()).toBe(0);
     expect(json.tool_calls).toEqual([{ name: args.name, status: "success" }]);
     const progressLines = result.stderr.split("\n").filter((line) =>
-      line.length > 0 && !line.startsWith("[notice]")
+      line.length > 0 &&
+      !line.startsWith("[notice]") &&
+      line !== "YOLO enabled: permissions and sandboxing disabled"
     );
     expect(progressLines.length).toBeGreaterThan(0);
     expect(new Set(progressLines).size).toBe(progressLines.length);
@@ -499,7 +400,7 @@ describe("filesystem path handling", () => {
         body.includes(childPrompt) && !body.includes("parent_create_1");
       const gate = createChildReadGate(8_000);
       const routeChildAndParent = async (body: string) => {
-        if (body.includes('"toolCallId":"child_read_1"')) {
+        if (requestHasToolCallId(body, "child_read_1")) {
           gate.capture(toolResultOutput(body, "child_read_1"));
           return finalText("Child read the added-root fixture.");
         }
@@ -841,7 +742,7 @@ describe("filesystem path handling", () => {
           },
           {
             id: "write_classified_external",
-            path: "../external/classified/nested/created.txt",
+            path: classifiedExternalTarget,
             target: classifiedExternalTarget,
             resultPath: classifiedExternalTarget,
             addDir: false,
@@ -993,7 +894,15 @@ describe("filesystem path handling", () => {
           expect(trace).not.toContain(
             "committed file read tracker refresh failed",
           );
-          expect(result.stderr).toBe(
+          expect(
+            result.stderr
+              .split(/\r?\n/)
+              .filter((line) =>
+                line.length > 0 &&
+                line !== "YOLO enabled: permissions and sandboxing disabled"
+              )
+              .join("\n") + "\n",
+          ).toBe(
             "Writing typed.txt\n" +
               "Editing typed.txt\n",
           );
@@ -1120,7 +1029,7 @@ describe("filesystem path handling", () => {
           },
           expectedResultRequest: [copyOutTarget],
           expectedResultOutput: [copyOutTarget],
-          expectedClassifierRequests: 1,
+          expectedClassifierRequests: 0,
           beforeToolCall: () => expect(existsSync(copyOutTarget)).toBe(false),
         });
         expect(readFileSync(copyOutTarget, "utf8")).toBe("COPY_OUT\n");
@@ -1136,7 +1045,7 @@ describe("filesystem path handling", () => {
           },
           expectedResultRequest: [copyIntoWorkspaceSource],
           expectedResultOutput: [copyIntoWorkspaceSource, "copied-in.txt"],
-          expectedClassifierRequests: 1,
+          expectedClassifierRequests: 0,
           beforeToolCall: () => {
             expect(existsSync(copyIntoWorkspaceSource)).toBe(true);
             expect(existsSync(copyInTarget)).toBe(false);
@@ -1155,7 +1064,7 @@ describe("filesystem path handling", () => {
           },
           expectedResultRequest: [renameOutTarget],
           expectedResultOutput: [renameOutTarget],
-          expectedClassifierRequests: 1,
+          expectedClassifierRequests: 0,
           beforeToolCall: () => {
             expect(existsSync(join(root.workspace, "rename-out.txt"))).toBe(true);
             expect(existsSync(renameOutTarget)).toBe(false);
@@ -1175,7 +1084,7 @@ describe("filesystem path handling", () => {
           },
           expectedResultRequest: [renameIntoWorkspaceSource],
           expectedResultOutput: [renameIntoWorkspaceSource, "renamed-in.txt"],
-          expectedClassifierRequests: 1,
+          expectedClassifierRequests: 0,
           beforeToolCall: () => {
             expect(existsSync(renameIntoWorkspaceSource)).toBe(true);
             expect(existsSync(renameInTarget)).toBe(false);
@@ -1332,7 +1241,7 @@ describe("filesystem path handling", () => {
   );
 
   test(
-    "external delete_file replans before review and preserves the target",
+    "yolo delete_file removes an external target without Gateway auto-review",
     async () => {
       const root = createIsolatedRoot();
       try {
@@ -1351,12 +1260,12 @@ describe("filesystem path handling", () => {
           (body) => {
             const resultOutput = toolResultOutput(body, "delete_external_1");
             expect(body).toContain(target);
-            expect(resultOutput).toContain("auto_denied");
-            expect(resultOutput).toContain("Blocked by automatic safety policy");
-            expect(existsSync(target)).toBe(true);
-            return finalText("external delete replanned");
+            expect(resultOutput).toContain("deleted");
+            expect(resultOutput).not.toContain("auto_denied");
+            expect(existsSync(target)).toBe(false);
+            return finalText("external delete complete");
           },
-        ], { classifierDecision: "allow" });
+        ]);
         try {
           const result = await runFx(
             [
@@ -1377,9 +1286,9 @@ describe("filesystem path handling", () => {
           expect(gateway.classifierRequests).toHaveLength(0);
           expect(gateway.remainingResponseCount()).toBe(0);
           expect(json.tool_calls).toEqual([
-            { name: "delete_file", status: "error" },
+            { name: "delete_file", status: "success" },
           ]);
-          expect(readFileSync(target, "utf8")).toBe("delete\n");
+          expect(existsSync(target)).toBe(false);
         } finally {
           gateway.stop();
         }
