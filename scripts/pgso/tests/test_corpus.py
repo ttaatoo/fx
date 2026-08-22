@@ -75,7 +75,6 @@ EXCLUDED_E2E_TESTS = (
     "tui-render-lab.test.ts",
     "tui-render-live-stress.test.ts",
     "web-fetch-live.test.ts",
-    "web-search-live.test.ts",
 )
 
 

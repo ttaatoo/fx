@@ -77,11 +77,12 @@ pub const ProviderEntry = struct {
     }
 
     pub fn resolvedBaseUrl(self: ProviderEntry) []const u8 {
+        const env_override = nonEmptyEnv(self.api.defaultBaseUrlEnv());
         const configured = std.mem.trim(u8, self.base_url, " \t\r\n");
-        const raw = if (configured.len > 0)
+        const raw = env_override orelse (if (configured.len > 0)
             configured
         else
-            nonEmptyEnv(self.api.defaultBaseUrlEnv()) orelse self.api.defaultBaseUrl();
+            self.api.defaultBaseUrl());
         if (self.provider == .xai) return grok_oauth.effectiveChatBaseUrl(raw);
         return raw;
     }
@@ -586,6 +587,43 @@ test "direct provider catalog loads providers.json and matches models" {
         catalog.preferredModel(.anthropic, "claude-sonnet-4-6").?,
     );
     try std.testing.expectEqualStrings("claude-opus-4-6", catalog.preferredModel(.anthropic, "other").?);
+}
+
+test "loopback SuperGrok proxy env wins over a baked-in production base URL" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    var providers_file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/providers.json", .{});
+    try providers_file.writeStreamingAll(io_mod.getIo(),
+        \\{
+        \\  "providers": {
+        \\    "xai": {
+        \\      "api": "openai-completions",
+        \\      "baseUrl": "https://cli-chat-proxy.grok.com/v1",
+        \\      "models": [{"id": "grok-4.6"}]
+        \\    }
+        \\  }
+        \\}
+    );
+    providers_file.close(io_mod.getIo());
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+
+    var environ = std.process.Environ.Map.init(alloc);
+    defer environ.deinit();
+    try environ.put("HOME", home);
+    try environ.put("GROK_CLI_CHAT_PROXY_BASE_URL", "http://127.0.0.1:43721/v1");
+    io_mod.setEnvironMap(&environ);
+    const restore_env = try stableEmptyTestEnviron();
+    defer io_mod.setEnvironMap(restore_env);
+
+    var catalog = try loadFromHomeDir(alloc, home);
+    defer catalog.deinit();
+    try std.testing.expectEqualStrings(
+        "http://127.0.0.1:43721/v1",
+        catalog.findByProvider(.xai).?.resolvedBaseUrl(),
+    );
 }
 
 test "startup overlay prefers FX_MODEL matches and usable direct providers" {

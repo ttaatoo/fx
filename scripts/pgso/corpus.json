@@ -11,8 +11,7 @@
     "tui-keybindings.test.ts": "The file-wide guard requires a real model credential.",
     "tui-render-lab.test.ts": "The suite validates render-lab infrastructure and owns separate native opt-in scenarios.",
     "tui-render-live-stress.test.ts": "The suite requires a real model credential and explicit live stress opt-in.",
-    "web-fetch-live.test.ts": "The suite requires explicit live-network opt-in.",
-    "web-search-live.test.ts": "The suite requires a real model credential and live provider responses."
+    "web-fetch-live.test.ts": "The suite requires explicit live-network opt-in."
   },
   "defaults": {
     "cwd": "tests/e2e",
