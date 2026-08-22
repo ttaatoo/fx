@@ -283,10 +283,10 @@ fx's rendering is inline by default and deliberately emits a small ANSI subset. 
 
 ### tmux (live TTY repros)
 
-Best for resize and SIGWINCH interactions. The helper in `tests/e2e/tmux-helpers.ts` exposes `resizeWindow(cols, rows)`, `capturePaneGrid()`, and `capturePaneEscapes()`. See `tests/e2e/tui-resize.test.ts` for the canonical resize matrix.
+Best for resize and SIGWINCH interactions. The helper in `tests/e2e/tmux-helpers.ts` exposes `resizeWindow(cols, rows)`, `capturePaneGrid()`, and `capturePaneEscapes()`. The in-process resize matrix lives in `src/ui/resize_tests.zig`.
 
 ```bash
-cd tests/e2e && bun test tui-resize.test.ts
+zig build test
 ```
 
 ### FX\_RECORD + fx replay (capture-and-replay)

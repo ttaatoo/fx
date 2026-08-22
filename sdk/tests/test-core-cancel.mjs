@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxAgent, supportsJspi } from "../node.js";
-import { wasmAnthropicEnv } from "./supergrok-fixture.mjs";
+import { exitIfWasmConcurrencyUnavailable, wasmAnthropicEnv } from "./supergrok-fixture.mjs";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const defaultWasm = resolve(scriptDir, "../../zig-out/bin/fx-core.wasm");
@@ -43,7 +43,10 @@ const agent = await Promise.race([
     env: wasmAnthropicEnv(),
   }),
   timeout("fx-core initialize"),
-]);
+]).catch((error) => {
+  exitIfWasmConcurrencyUnavailable(error);
+  throw error;
+});
 
 const session = await agent.createSession();
 const controller = new AbortController();

@@ -285,7 +285,7 @@ Add it to `src/ui/resize_tests.zig`. See the file header for what each Harness m
 
 ### tmux end-to-end test (real SIGWINCH, seconds per test)
 
-For bugs that only show up with a real terminal and a real signal (timing, input integration, terminal-emulator quirks), add a scenario to `tests/e2e/tui-resize.test.ts` using the helpers in `tmux-helpers.ts`:
+For bugs that only show up with a real terminal and a real signal (timing, input integration, terminal-emulator quirks), add a tmux scenario using the helpers in `tests/e2e/tmux-helpers.ts`. Prefer landing the regression in `src/ui/resize_tests.zig` first:
 
 ```typescript
 test("my scenario", async () => {

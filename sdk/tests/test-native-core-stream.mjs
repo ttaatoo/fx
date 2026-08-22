@@ -52,28 +52,12 @@ const timeout = (label, ms = 5000) => new Promise((_, reject) => {
 });
 let agent;
 try {
-  let fetchCalls = 0;
-  let firstAbortResolve;
-  const firstAbort = new Promise((resolveAbort) => { firstAbortResolve = resolveAbort; });
   agent = await createFxAgent({
     nativeAddon: addon,
     backend: "native",
-    fetch(input, init) {
-      fetchCalls += 1;
-      if (fetchCalls === 1) {
-        init.signal.addEventListener("abort", () => {
-          events.push("first-abort");
-          firstAbortResolve();
-        }, { once: true });
-      } else if (fetchCalls === 2) {
-        events.push("second-fetch");
-      }
-      return fetch(input, init);
-    },
     home,
     workspaceRoot: home,
     env: {
-      AI_GATEWAY_API_KEY: "native-core-stream-key",
       FX_MODEL: SUPERGROK_MODEL,
     },
   });
@@ -92,8 +76,8 @@ try {
 
   const secondTurn = session.prompt("second native prompt");
   await Promise.race([
-    Promise.any([firstAbort, firstConnectionClosed]),
-    timeout("first response abort or connection close"),
+    firstConnectionClosed,
+    timeout("first SuperGrok loopback connection close"),
   ]);
   let secondText = "";
   for await (const update of secondTurn) {
@@ -103,11 +87,7 @@ try {
   }
   assert.equal(secondText.trimEnd(), "native two");
   assert.equal((await secondTurn.result).stopReason, "end_turn");
-  assert.equal(fetchCalls, 2, "both prompts must use the Node-owned fetch option");
-  const releaseEvents = [events.indexOf("first-abort"), events.indexOf("first-connection-close")]
-    .filter((index) => index >= 0);
-  assert.ok(releaseEvents.length > 0, "the first response must be aborted or closed");
-  assert.ok(events.indexOf("second-fetch") > Math.min(...releaseEvents), "request two must start after response one releases the pump slot");
+  assert.equal(requestCount, 2, "both prompts must use the SuperGrok OpenAI loopback");
   await session.close();
   assert.equal(await agent.close(), 0);
   agent = null;

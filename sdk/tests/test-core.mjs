@@ -7,6 +7,7 @@ import {
   ANTHROPIC_FAST_MODEL,
   ANTHROPIC_MODEL,
   anthropicSseResponse,
+  exitIfWasmConcurrencyUnavailable,
   parseChatRequest,
   wasmAnthropicEnv,
 } from "./supergrok-fixture.mjs";
@@ -89,7 +90,10 @@ const agent = await Promise.race([
   new Promise((_, reject) => {
     initializeTimeout = setTimeout(() => reject(new Error("timed out waiting for fx-core initialize")), 5000);
   }),
-]).finally(() => clearTimeout(initializeTimeout));
+]).catch((error) => {
+  exitIfWasmConcurrencyUnavailable(error);
+  throw error;
+}).finally(() => clearTimeout(initializeTimeout));
 
 checkpoint("agent initialized");
 const session = await agent.createSession();

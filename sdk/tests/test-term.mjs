@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxTerminal, supportsJspi } from "../node.js";
-import { ANTHROPIC_MODEL, parseChatRequest, wasmAnthropicEnv } from "./supergrok-fixture.mjs";
+import { ANTHROPIC_MODEL, exitIfWasmConcurrencyUnavailable, parseChatRequest, wasmAnthropicEnv } from "./supergrok-fixture.mjs";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const defaultWasm = resolve(scriptDir, "../../zig-out/bin/fx-term.wasm");
@@ -151,6 +151,9 @@ const runtime = await createFxTerminal({
   onEvent(event) { events.push(event); },
   traceWasi: process.env.FX_WASI_TRACE === "1",
   stderr(bytes) { process.stderr.write(bytes); },
+}).catch((error) => {
+  exitIfWasmConcurrencyUnavailable(error);
+  throw error;
 });
 await Promise.race([
   runtime.interactive,

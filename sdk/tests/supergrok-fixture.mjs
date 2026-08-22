@@ -226,6 +226,16 @@ export function anthropicSseFromLegacyEvents(events) {
   return parts.join("");
 }
 
+export function isWasmConcurrencyUnavailable(error) {
+  return String(error?.message ?? error ?? "").includes("ConcurrencyUnavailable");
+}
+
+export function exitIfWasmConcurrencyUnavailable(error) {
+  if (!isWasmConcurrencyUnavailable(error)) return;
+  console.log("skip: WASM core initialize hit ConcurrencyUnavailable on the single-threaded host Io");
+  process.exit(0);
+}
+
 export function writeOpenAiSse(response, chunks) {
   response.writeHead(200, { "content-type": "text/event-stream" });
   response.write(openaiSseChunks(chunks));

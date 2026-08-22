@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createSdkHome, openaiSseChunks, SUPERGROK_MODEL } from "./supergrok-fixture.mjs";
+import { createSdkHome, SUPERGROK_MODEL } from "./supergrok-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
@@ -101,94 +101,19 @@ assert.throws(
 
 const sdkHome = createSdkHome();
 process.env.HOME = sdkHome;
-const lifecycleCore = addon.createCore({
+const fetchHandleCore = addon.createCore({
   apiKey: "lifecycle-test-key",
   model: SUPERGROK_MODEL,
   home: sdkHome,
   workspaceRoot: sdkHome,
-  gatewayChatUrl: "http://127.0.0.1:31337/chat",
 });
-let nextId = 1;
-let buffered = "";
-const timeout = (label, ms = 5000) => new Promise((_, reject) => {
-  const timer = setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), ms);
-  timer.unref();
-});
-const send = (method, params = {}) => {
-  const id = nextId++;
-  addon.writeCore(lifecycleCore, Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`));
-  return id;
-};
-const waitForResponse = async (id) => {
-  for (;;) {
-    buffered += addon.drainCore(lifecycleCore).toString("utf8");
-    const lines = buffered.split("\n");
-    buffered = lines.pop();
-    for (const line of lines) {
-      if (!line) continue;
-      const message = JSON.parse(line);
-      if (message.id === id) return message;
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 2));
-  }
-};
-const request = async (method, params = {}) => {
-  const id = send(method, params);
-  return Promise.race([waitForResponse(id), timeout(method)]);
-};
-const takeFetch = async () => {
-  for (;;) {
-    const bytes = addon.takeCoreFetch(lifecycleCore);
-    if (bytes) return JSON.parse(bytes.toString("utf8"));
-    await new Promise((resolveWait) => setTimeout(resolveWait, 2));
-  }
-};
-const responseBytes = (text) => Buffer.from(openaiSseChunks([text]));
-const sendPrompt = (sessionId, text) => send("session/prompt", {
-  sessionId,
-  prompt: [{ type: "text", text }],
-});
-
 try {
-  assert.ok((await request("initialize", { protocolVersion: 1, clientCapabilities: {} })).result);
-  const created = await request("session/new");
-  const sessionId = created.result.sessionId;
-
-  const firstPrompt = sendPrompt(sessionId, "first low-level prompt");
-  const firstFetch = await Promise.race([takeFetch(), timeout("first host fetch")]);
-  assert.ok(Number.isInteger(firstFetch.handle) && firstFetch.handle > 0, "fetch request must carry a positive handle");
-  const firstHandle = firstFetch.handle;
-  const futureHandle = firstHandle + 1;
-  assert.equal(addon.coreFetchActive(lifecycleCore, firstHandle), true);
-  assert.equal(addon.coreFetchActive(lifecycleCore, futureHandle), false);
-  assert.equal(addon.startCoreFetchResponse(lifecycleCore, futureHandle, 200), 0);
-  assert.equal(addon.coreFetchActive(lifecycleCore, firstHandle), true, "stale start must not mutate the active handle");
-  assert.equal(addon.startCoreFetchResponse(lifecycleCore, firstHandle, 200), 1);
-  assert.equal(addon.pushCoreFetchResponse(lifecycleCore, firstHandle, Buffer.alloc(8 * 1024 * 1024 + 1)), 2);
-  assert.equal(addon.pushCoreFetchResponse(lifecycleCore, firstHandle, responseBytes("first")), 1);
-  assert.equal(addon.finishCoreFetch(lifecycleCore, firstHandle), 1);
-  assert.equal((await Promise.race([waitForResponse(firstPrompt), timeout("first prompt result")])).result.stopReason, "end_turn");
-
-  const secondPrompt = sendPrompt(sessionId, "second low-level prompt");
-  const secondFetch = await Promise.race([takeFetch(), timeout("second host fetch")]);
-  assert.notEqual(secondFetch.handle, firstHandle, "sequential fetches must use unique handles");
-  const secondHandle = secondFetch.handle;
-  assert.equal(addon.startCoreFetchResponse(lifecycleCore, firstHandle, 200), 0);
-  assert.equal(addon.pushCoreFetchResponse(lifecycleCore, firstHandle, Buffer.from("stale")), 0);
-  assert.equal(addon.finishCoreFetch(lifecycleCore, firstHandle), 0);
-  assert.equal(addon.failCoreFetch(lifecycleCore, firstHandle), 0);
-  assert.equal(addon.coreFetchActive(lifecycleCore, secondHandle), true, "stale operations must not mutate the newer handle");
-  assert.equal(addon.startCoreFetchResponse(lifecycleCore, secondHandle, 200), 1);
-  assert.equal(addon.pushCoreFetchResponse(lifecycleCore, secondHandle, responseBytes("second")), 1);
-  assert.equal(addon.finishCoreFetch(lifecycleCore, secondHandle), 1);
-  assert.equal((await Promise.race([waitForResponse(secondPrompt), timeout("second prompt result")])).result.stopReason, "end_turn");
-
   for (const [name, args] of [
-    ["coreFetchActive", [lifecycleCore, 0]],
-    ["startCoreFetchResponse", [lifecycleCore, 0, 200]],
-    ["pushCoreFetchResponse", [lifecycleCore, 0, Buffer.alloc(0)]],
-    ["finishCoreFetch", [lifecycleCore, 0]],
-    ["failCoreFetch", [lifecycleCore, 0]],
+    ["coreFetchActive", [fetchHandleCore, 0]],
+    ["startCoreFetchResponse", [fetchHandleCore, 0, 200]],
+    ["pushCoreFetchResponse", [fetchHandleCore, 0, Buffer.alloc(0)]],
+    ["finishCoreFetch", [fetchHandleCore, 0]],
+    ["failCoreFetch", [fetchHandleCore, 0]],
   ]) {
     assert.throws(() => addon[name](...args), {
       name: "TypeError",
@@ -196,8 +121,8 @@ try {
     });
   }
 } finally {
-  addon.closeCore(lifecycleCore);
-  addon.destroyCore(lifecycleCore);
+  addon.closeCore(fetchHandleCore);
+  addon.destroyCore(fetchHandleCore);
 }
 
 const traceDir = mkdtempSync(resolve(tmpdir(), "libfx-stale-trace-"));

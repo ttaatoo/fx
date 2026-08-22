@@ -117,12 +117,38 @@ jobs:
   build-macos-arm64:
     needs: check-version
     if: needs.check-version.outputs.needed == 'true'
-    permissions:
-      actions: read
-      contents: read
-    uses: ./.github/workflows/pgso-macos-arm64.yml
-    with:
-      package_release: true
+    name: Build macos-aarch64
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Require native arm64 host
+        run: test "$(uname -m)" = arm64
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: "0.16.0"
+
+      - name: Build
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          package_dir="$RUNNER_TEMP/fx-package-macos-aarch64"
+          mkdir -p "$package_dir"
+          cp zig-out/bin/fx LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
+          tar -czf fx-macos-aarch64.tar.gz -C "$package_dir" fx LICENSE THIRD_PARTY_NOTICES.md
+          shasum -a 256 fx-macos-aarch64.tar.gz > fx-macos-aarch64.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fx-macos-aarch64
+          path: |
+            fx-macos-aarch64.tar.gz
+            fx-macos-aarch64.tar.gz.sha256
 
   release:
     needs: [check-version, build, build-macos-arm64]
@@ -143,7 +169,7 @@ jobs:
       - name: Alias macOS arm64 tarball for the Homebrew formula
         run: |
           set -euo pipefail
-          # PGSO packages fx-macos-aarch64.tar.gz (upgrade platform id).
+          # Native macos-15 packages fx-macos-aarch64.tar.gz (upgrade platform id).
           # Formula/fx.rb downloads fx-macos-arm64.tar.gz from the GitHub Release.
           if [ -f fx-macos-aarch64.tar.gz ]; then
             cp fx-macos-aarch64.tar.gz fx-macos-arm64.tar.gz
