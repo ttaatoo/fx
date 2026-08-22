@@ -19,6 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { adaptRetiredGatewayTestEnv, writeE2eGrokAuth } from "./direct-provider-env";
 import {
   classifierEvidenceFromRequest,
   completionResponseForPath,
@@ -27,6 +28,7 @@ import {
   heldFakeGatewayFinalText,
   isVolatileTokenStatusRow,
   startDynamicFakeGateway,
+  toolResultOutputFromBody,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -246,7 +248,7 @@ function requestMessages(body: string): Array<{
     prompt?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
     messages?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
   };
-  return request.prompt ?? request.messages ?? [];
+  return request.messages ?? request.prompt ?? [];
 }
 
 function toolResultText(body: string, toolCallId: string): string {
@@ -897,16 +899,7 @@ function foregroundFxRow(
 }
 
 function toolResultValue(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: string | Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => Array.isArray(message.content) ? message.content : [])
-    .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
-  expect(result).toBeDefined();
-  const output = result!.output as Record<string, unknown>;
-  expect(output.type).toBe("text");
-  return output.value as string;
+  return toolResultOutputFromBody(body, toolCallId);
 }
 
 function expectTraceOrder(trace: string, markers: string[]) {
@@ -930,6 +923,7 @@ function createIsolatedRoot(baseDir = tmpdir()): IsolatedRoot {
   mkdirSync(join(home, ".fx"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   mkdirSync(hostileBin, { recursive: true });
+  writeE2eGrokAuth(home);
   writeFileSync(
     join(home, ".fx", "settings.json"),
     JSON.stringify({ sandbox: "none", permission: {}, maxxing_mode: "legacy" }),
@@ -1438,31 +1432,8 @@ describe("effect-aware command permissions", () => {
         expect(outputIndex).toBeGreaterThan(0);
         expect(lines[outputIndex - 1]).toContain("● Ran");
       };
-      const toolResultValue = (body: string, toolCallId: string): string => {
-        const request = JSON.parse(body) as {
-          prompt?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
-          messages?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
-        };
-        const messages = request.prompt ?? request.messages ?? [];
-        const parts = messages.flatMap((message) =>
-          Array.isArray(message.content) ? message.content : []
-        ) as Array<Record<string, any>>;
-        const result = parts.find((part) =>
-          (part.type === "tool-result" && part.toolCallId === toolCallId) ||
-          (part.type === "tool_result" && part.tool_use_id === toolCallId)
-        );
-        if (result) {
-          if (result.output?.type === "text") return String(result.output.value ?? "");
-          return String(result.content ?? result.output?.value ?? "");
-        }
-        const toolMessage = messages.find((message) =>
-          message.role === "tool" && message.tool_call_id === toolCallId
-        );
-        expect(toolMessage).toBeDefined();
-        return typeof toolMessage?.content === "string"
-          ? toolMessage.content
-          : JSON.stringify(toolMessage?.content ?? "");
-      };
+      const toolResultValue = (body: string, toolCallId: string): string =>
+        toolResultOutputFromBody(body, toolCallId);
 
       activeSession = await TmuxSession.create({
         cmd: FX_BIN,
@@ -2266,7 +2237,7 @@ class AcpClient {
   static create(cwd: string, env: Record<string, string | undefined>) {
     return new AcpClient(nodeSpawn(FX_BIN, ["acp"], {
       cwd,
-      env: definedEnv({ ...process.env, ...env, NO_COLOR: "1" }),
+      env: definedEnv(adaptRetiredGatewayTestEnv({ ...process.env, ...env, NO_COLOR: "1" })),
       stdio: ["pipe", "pipe", "pipe"],
     }));
   }
