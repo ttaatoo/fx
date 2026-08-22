@@ -19,6 +19,8 @@ For end users, its CLI output style and form factor aim to be closer to a Unix s
 
 It's open source (Apache-2.0), model-agnostic, and suitable for both local and cloud inference.
 
+fx runs on Linux and macOS (x86_64 and aarch64). It does not support Windows, WebAssembly, or in-browser hosts.
+
 ## Install
 
 This repository is a same-repo Homebrew tap (`ttaatoo/fx`, not a separate `homebrew-fx`). Formula only. No cask.

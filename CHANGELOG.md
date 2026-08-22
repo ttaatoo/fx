@@ -5,7 +5,7 @@
 <!-- release:start -->
 ### Breaking Changes
 
-- **JavaScript embeds:** This release does not build `fx-core.wasm`, `fx-term.wasm`, or the libfx Node-API addon. Use the native `fx` CLI. Editor hosts still use `fx acp`
+- **Supported platforms:** Linux and macOS on x86_64 and aarch64. This release does not support Windows, WebAssembly, or browser hosts. Use the native `fx` CLI. Editor hosts still use `fx acp`
 
 ### New Features
 

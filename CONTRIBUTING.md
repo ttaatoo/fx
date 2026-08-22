@@ -4,6 +4,8 @@
 
 `fx` is a CLI-first coding agent written in Zig.
 
+Supported platforms are Linux and macOS on x86_64 and aarch64. Windows, WebAssembly, and browser hosts are out of scope.
+
 Contributions should preserve that direction:
 
 * CLI-first over terminal-IDE behavior

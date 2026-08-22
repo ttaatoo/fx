@@ -11,6 +11,7 @@ const PgsoArtifact = enum {
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    assertSupportedNativeTarget(target);
     const optimize = b.standardOptimizeOption(.{});
     const pgso_artifact = b.option(
         PgsoArtifact,
@@ -276,6 +277,25 @@ pub fn build(b: *std.Build) void {
             "pgso-ir requires -Dpgso-artifact",
         );
         pgso_ir_step.dependOn(&missing_artifact.step);
+    }
+}
+
+fn assertSupportedNativeTarget(target: std.Build.ResolvedTarget) void {
+    const os = target.result.os.tag;
+    const arch = target.result.cpu.arch;
+    switch (os) {
+        .linux, .macos => {},
+        else => std.process.fatal(
+            "fx supports Linux and macOS only (got {s})",
+            .{@tagName(os)},
+        ),
+    }
+    switch (arch) {
+        .x86_64, .aarch64 => {},
+        else => std.process.fatal(
+            "fx supports x86_64 and aarch64 only (got {s})",
+            .{@tagName(arch)},
+        ),
     }
 }
 

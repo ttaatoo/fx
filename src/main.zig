@@ -5,6 +5,17 @@ const io_mod = @import("core/shared/io.zig");
 
 pub const version = "0.0.5";
 
+comptime {
+    switch (builtin.os.tag) {
+        .linux, .macos => {},
+        else => @compileError("fx supports Linux and macOS only"),
+    }
+    switch (builtin.cpu.arch) {
+        .x86_64, .aarch64 => {},
+        else => @compileError("fx supports x86_64 and aarch64 only"),
+    }
+}
+
 const app_lifecycle = @import("core/app/app_lifecycle.zig");
 const provider_runtime = @import("core/app/provider_runtime.zig");
 const auth_runtime = @import("core/auth/auth_runtime.zig");
