@@ -3,6 +3,10 @@
 ## 0.0.5
 
 <!-- release:start -->
+### Breaking Changes
+
+- **JavaScript embeds:** This release does not build `fx-core.wasm`, `fx-term.wasm`, or the libfx Node-API addon. Use the native `fx` CLI. Editor hosts still use `fx acp`
+
 ### New Features
 
 - **Direct providers:** Sign in with SuperGrok OAuth (`fx login grok`), Anthropic Messages, or Codex. This fork has no Vercel AI Gateway path

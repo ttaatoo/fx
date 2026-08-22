@@ -131,7 +131,6 @@ const worker_runtime = @import("core/agent/worker_runtime.zig");
 const question_prompt = @import("core/agent/question_prompt.zig");
 const url_opener = @import("core/hosts/url_opener.zig");
 const event_loop = @import("ui/event_loop.zig");
-const wasm_terminal = if (host_target.is_wasm) @import("ui/terminal/wasm_terminal.zig") else struct {};
 const footer_runtime = @import("ui/footer/runtime.zig");
 const question_ui = @import("ui/footer/question_ui.zig");
 const ui_input = @import("ui/input/runtime.zig");
@@ -2756,41 +2755,6 @@ comptime {
     }
 }
 
-pub fn runWasmTerminal(init: std.process.Init) !void {
-    if (comptime !host_target.is_wasm or build_options.wasm_surface != .term) {
-        @compileError("runWasmTerminal requires -Dwasm-surface=term");
-    }
-    io_mod.setIo(init.io);
-    io_mod.setEnvironMap(init.environ_map);
-    const alloc = std.heap.c_allocator;
-    var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, alloc);
-    defer args.deinit();
-    _ = args.skip();
-    var cli_args: std.ArrayList([:0]const u8) = .empty;
-    defer cli_args.deinit(alloc);
-    while (args.next()) |arg| try cli_args.append(alloc, arg);
-
-    const parsed = try cli_surface.parseInteractiveLaunch(
-        alloc,
-        cli_args.items,
-        builtin_commands.top_level_registry,
-    );
-    var launch = switch (parsed) {
-        .interactive => |value| value,
-        .noninteractive => |value| {
-            var noninteractive = value;
-            defer noninteractive.deinit(alloc);
-            return error.WasmTerminalInteractiveLaunchRequired;
-        },
-    };
-    defer launch.deinit(alloc);
-    const outcome = try app_entry_runtime.runInteractiveCooperative(App, alloc, &launch);
-    switch (outcome) {
-        .returned => {},
-        .exit => |code| if (code != 0) return error.WasmTerminalExited,
-    }
-}
-
 pub fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
     mainC(c_argc, c_argv, c_envp) catch return 1;
     return 0;
@@ -3771,7 +3735,6 @@ test "semantic code block preserves indentation on wrapped continuation rows" {
 }
 
 test {
-    _ = @import("napi_fetch_state.zig");
     _ = @import("core/config/model_provider.zig");
     _ = @import("core/config/direct_providers.zig");
     _ = @import("gateway/direct_provider.zig");
