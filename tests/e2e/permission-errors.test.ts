@@ -11,12 +11,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import {
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewayPermissionDecision,
   fakeGatewayToolCall,
   startFakeGateway,
+  toolResultOutputFromBody,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -55,17 +56,7 @@ function parseFxJson(result: { stdout: string; stderr: string; code: number | nu
 }
 
 function toolResultText(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
-  expect(result).toBeDefined();
-  const output = result!.output as Record<string, unknown>;
-  expect(output.type).toBe("text");
-  expect(typeof output.value).toBe("string");
-  return output.value as string;
+  return toolResultOutputFromBody(body, toolCallId);
 }
 
 function permissionEnv(
@@ -79,7 +70,7 @@ function permissionEnv(
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    FX_MODEL: SUPERGROK_MODEL,
     FX_AUTO_UPGRADE: "0",
     NO_COLOR: "1",
   };
@@ -200,7 +191,7 @@ describe("generic permission typed errors", () => {
             FX_GATEWAY_BASE_URL: gateway.baseUrl,
             FX_GATEWAY_CHAT_URL: gateway.chatUrl,
             FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
+            FX_MODEL: SUPERGROK_MODEL,
             FX_AUTO_UPGRADE: "0",
           },
           timeoutMs: TIMEOUT,
