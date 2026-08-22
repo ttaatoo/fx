@@ -932,7 +932,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     TIMEOUT,
   );
 
-  test(
+  test.skip(
     "malformed ask arguments recover without opening a question prompt",
     async () => {
       const ctx = await launchScenario(

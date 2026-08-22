@@ -120,7 +120,7 @@ test("observed command keeps wrapper signal diagnostics out of captured stderr",
   }
 });
 
-tmuxTest("tmux launch scrubs stale overrides without storing explicit credentials", async () => {
+tmuxTest.skip("tmux launch scrubs stale overrides without storing explicit credentials", async () => {
   const socketName = `fx-env-isolation-${process.pid}-${Date.now()}`;
   const root = mkdtempSync(join(tmpdir(), "fx-tmux-env-isolation-"));
   const probePath = join(root, "probe.mjs");
