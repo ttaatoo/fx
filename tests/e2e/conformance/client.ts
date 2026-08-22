@@ -10,7 +10,10 @@ import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  FAKE_GATEWAY_MODEL,
+  SUPERGROK_MODEL,
+  adaptRetiredGatewayTestEnv,
+} from "../direct-provider-env";
+import {
   fakeGatewayFinalText,
   fakeGatewayToolCall,
   startFakeGateway,
@@ -136,9 +139,33 @@ if (toolCalls.length === 0) {
   ));
 }
 gatewaySteps.push(fakeGatewayFinalText("MCP conformance client finished."));
-const gateway = startFakeGateway(gatewaySteps);
+const gateway = startFakeGateway(gatewaySteps, {
+  models: [{ id: SUPERGROK_MODEL, type: "language", tags: ["tool-use"] }],
+});
 
 try {
+  const env = adaptRetiredGatewayTestEnv({
+    ...process.env,
+    HOME: home,
+    AI_GATEWAY_API_KEY: "mcp-conformance-placeholder",
+    VERCEL_OIDC_TOKEN: undefined,
+    FX_AUTO_UPGRADE: "0",
+    FX_DISABLE_KEYCHAIN: "1",
+    FX_E2E_MCP_AUTH_AUTOMATE: "1",
+    FX_PERMISSION_MODE: "yolo",
+    ...(scenarioContext.client_secret
+      ? {
+          FX_MCP_CONFORMANCE_CLIENT_SECRET: scenarioContext.client_secret,
+        }
+      : {}),
+    FX_GATEWAY_BASE_URL: gateway.baseUrl,
+    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
+    FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
+    FX_MODEL: SUPERGROK_MODEL,
+    FX_SKIP_ONBOARDING: "1",
+    FX_SOUND: "0",
+    NO_COLOR: "1",
+  });
   const child = Bun.spawn(
     [
       fxBin,
@@ -150,27 +177,7 @@ try {
     ],
     {
       cwd: workspace,
-      env: {
-        ...process.env,
-        HOME: home,
-        AI_GATEWAY_API_KEY: "mcp-conformance-placeholder",
-        VERCEL_OIDC_TOKEN: "",
-        FX_AUTO_UPGRADE: "0",
-        FX_DISABLE_KEYCHAIN: "1",
-        FX_E2E_MCP_AUTH_AUTOMATE: "1",
-        ...(scenarioContext.client_secret
-          ? {
-              FX_MCP_CONFORMANCE_CLIENT_SECRET:
-                scenarioContext.client_secret,
-            }
-          : {}),
-        FX_GATEWAY_BASE_URL: gateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_SKIP_ONBOARDING: "1",
-        FX_SOUND: "0",
-        NO_COLOR: "1",
-      },
+      env,
       stdout: "pipe",
       stderr: "pipe",
     },

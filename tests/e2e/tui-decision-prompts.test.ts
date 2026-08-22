@@ -22,6 +22,7 @@ import {
   fakeGatewayFinalText,
   fakeGatewayPermissionDecision,
   fakeGatewaySerializedToolCall,
+  requestHasToolCallId,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -911,8 +912,11 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(finalPane).not.toContain("Request failed");
       expect(ctx.gateway.requests).toHaveLength(2);
       const followup = ctx.gateway.requests[1].body;
-      expect(followup).toContain(`"toolCallId":"${ARGUMENT_RECOVERY_CALL_ID}"`);
-      expect(followup).toContain(`"toolName":"${ARGUMENT_RECOVERY_TOOL_NAME}"`);
+      expect(requestHasToolCallId(followup, ARGUMENT_RECOVERY_CALL_ID)).toBe(true);
+      expect(
+        followup.includes(`"toolName":"${ARGUMENT_RECOVERY_TOOL_NAME}"`) ||
+          followup.includes(`"name":"${ARGUMENT_RECOVERY_TOOL_NAME}"`),
+      ).toBe(true);
       expect(followup).toContain("Run tests");
       expect(followup).not.toContain("tool_execution_failed");
       await assertProcessAliveAndClean(ctx);

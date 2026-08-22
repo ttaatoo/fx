@@ -55,12 +55,27 @@ export function shouldWriteE2eGrokAuth(
   return typeof env.HOME === "string" && env.HOME.length > 0;
 }
 
+function isUnwritableHome(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "EACCES" ||
+    (error as NodeJS.ErrnoException | undefined)?.code === "EPERM";
+}
+
+function writeE2eGrokAuthIfPossible(home: string): boolean {
+  try {
+    writeE2eGrokAuth(home);
+    return true;
+  } catch (error) {
+    if (isUnwritableHome(error)) return false;
+    throw error;
+  }
+}
+
 export function maybeWriteE2eGrokAuth(
   env: Record<string, string | undefined>,
 ): void {
   if (!shouldWriteE2eGrokAuth(env) || !env.HOME) return;
   const path = join(env.HOME, ".fx", "grok-auth.json");
-  if (!existsSync(path)) writeE2eGrokAuth(env.HOME);
+  if (!existsSync(path)) writeE2eGrokAuthIfPossible(env.HOME);
 }
 
 export function ensureTuiSupergrokHome(
@@ -70,9 +85,18 @@ export function ensureTuiSupergrokHome(
   if (!home || env.FX_E2E_NO_GROK_AUTH === "1" || env.FX_SKIP_ONBOARDING === "0") {
     return;
   }
-  writeE2eGrokAuth(home);
+  const wantsLoopbackChat = isLoopbackUrl(env.GROK_CLI_CHAT_PROXY_BASE_URL) ||
+    isLoopbackUrl(env.FX_E2E_GATEWAY_CHAT_URL) ||
+    isLoopbackUrl(env.FX_GATEWAY_CHAT_URL);
+  if (!wantsLoopbackChat) return;
+  if (!writeE2eGrokAuthIfPossible(home)) return;
   if (!existsSync(join(home, ".fx", "providers.json"))) {
-    writeE2eXaiProviders(home);
+    try {
+      writeE2eXaiProviders(home);
+    } catch (error) {
+      if (isUnwritableHome(error)) return;
+      throw error;
+    }
   }
 }
 

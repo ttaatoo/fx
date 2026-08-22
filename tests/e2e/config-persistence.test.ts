@@ -230,7 +230,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
                 model: "legacy/project-a",
                 permission_mode: "ask",
                 effort: "low",
-                fast_mode: false,
                 startup_scrollback: true,
                 prompt_history: { enabled: true, future: "keep-a-history" },
                 statusLine: {
@@ -246,7 +245,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
                 model: "legacy/project-b",
                 permission_mode: "ask",
                 effort: "high",
-                fast_mode: false,
                 startup_scrollback: true,
                 prompt_history: { enabled: true, future: "keep-b-history" },
                 statusLine: {
@@ -333,7 +331,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           "model",
           "permission_mode",
           "effort",
-          "fast_mode",
           "startup_scrollback",
           "prompt_history_enabled",
           "statusline_sandbox",
@@ -806,12 +803,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           stderrPath,
         });
         await session.waitForComposer(TIMEOUT);
-        await session.sendLiteral("/model");
-        await session.sendKeys("Enter");
-        const pickerPane = await session.waitForText(SUPERGROK_FAST_MODEL, TIMEOUT);
-        expect(pickerPane).toContain(SUPERGROK_MODEL);
-        expect(pickerPane).toContain(SUPERGROK_FAST_MODEL);
-        await session.sendKeys("Down");
+        await session.pasteText(`/model ${SUPERGROK_FAST_MODEL} auto`);
         await session.sendKeys("Enter");
         await session.waitForText(`● Switched to ${SUPERGROK_FAST_MODEL}`, TIMEOUT);
         await session.waitForPane(
