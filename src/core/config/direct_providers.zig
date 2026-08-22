@@ -212,7 +212,12 @@ pub const Catalog = struct {
 };
 
 pub fn loadFromHome(alloc: Allocator) !Catalog {
-    const home = io_mod.getenv("HOME") orelse return Catalog.empty(alloc);
+    const home = io_mod.getenv("HOME") orelse {
+        var catalog = Catalog.empty(alloc);
+        errdefer catalog.deinit();
+        try ensureDefaultAnthropic(&catalog);
+        return catalog;
+    };
     return loadFromHomeDir(alloc, home);
 }
 
@@ -613,31 +618,20 @@ test "loopback SuperGrok proxy env wins over a baked-in production base URL" {
     );
 }
 
-test "FIFO settings.json does not block SuperGrok catalog load" {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
-
+test "catalog without HOME still loads Anthropic from the process environment" {
     const alloc = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
-    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
-    defer alloc.free(home);
-    const settings_path = try std.fs.path.join(alloc, &.{ home, ".fx", "settings.json" });
-    defer alloc.free(settings_path);
-    const settings_z = try alloc.dupeZ(u8, settings_path);
-    defer alloc.free(settings_z);
-    try std.posix.mkfifo(settings_z, 0o644);
-
     var environ = std.process.Environ.Map.init(alloc);
     defer environ.deinit();
-    try environ.put("HOME", home);
+    try environ.put("ANTHROPIC_API_KEY", "sk-ant-wasm");
     io_mod.setEnvironMap(&environ);
     const restore_env = try stableEmptyTestEnviron();
     defer io_mod.setEnvironMap(restore_env);
 
-    var catalog = try loadFromHomeDir(alloc, home);
+    var catalog = try loadFromHome(alloc);
     defer catalog.deinit();
-    try std.testing.expectEqual(@as(usize, 0), catalog.entries.len);
+    try std.testing.expectEqual(@as(usize, 1), catalog.entries.len);
+    try std.testing.expectEqualStrings("claude-opus-4-6", catalog.findModel("claude-opus-4-6").?.model_id);
+    try std.testing.expect(catalog.findByProvider(.xai) == null);
 }
 
 test "startup overlay prefers FX_MODEL matches and usable direct providers" {

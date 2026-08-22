@@ -113,7 +113,21 @@ export type CapabilityReferenceFinding = {
 };
 
 export function parseGatewayRequest(body: string): GatewayRequest {
-  return JSON.parse(body) as GatewayRequest;
+  const parsed = JSON.parse(body) as GatewayRequest & {
+    messages?: GatewayPromptMessage[];
+    system?: unknown;
+  };
+  const messages = parsed.prompt ?? parsed.messages ?? [];
+  const prompt = parsed.system === undefined
+    ? messages
+    : [{ role: "system", content: parsed.system }, ...messages];
+  const tools = (parsed.tools ?? []).map((tool) => {
+    const functionName = (tool as { function?: { name?: unknown } }).function?.name;
+    if (typeof tool.name === "string") return tool;
+    if (typeof functionName === "string") return { ...tool, name: functionName };
+    return tool;
+  });
+  return { ...parsed, prompt, tools };
 }
 
 export function contentText(content: unknown): string {
@@ -134,9 +148,11 @@ export function canonicalToolName(name: string): string {
 }
 
 export function serializedToolNames(request: GatewayRequest): string[] {
-  return (request.tools ?? []).flatMap((tool) =>
-    typeof tool.name === "string" ? [tool.name] : []
-  );
+  return (request.tools ?? []).flatMap((tool) => {
+    if (typeof tool.name === "string") return [tool.name];
+    const functionName = (tool as { function?: { name?: unknown } }).function?.name;
+    return typeof functionName === "string" ? [functionName] : [];
+  });
 }
 
 export function canonicalAdvertisedToolNames(request: GatewayRequest): Set<string> {

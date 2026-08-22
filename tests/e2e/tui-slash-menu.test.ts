@@ -566,7 +566,9 @@ function composerRow(grid: string[]): number {
 function footerStatusRow(grid: string[]): number {
   return lastRowMatching(
     grid,
-    (line) => line.includes("gpt-5") || line.includes("↑↓ Navigate"),
+    (line) =>
+      line.includes("grok-4.6") ||
+      line.includes("↑↓ Navigate"),
   );
 }
 

@@ -176,6 +176,7 @@ export function adaptRetiredGatewayTestEnv(
     next.HOME &&
     next.ANTHROPIC_API_KEY &&
     wantsAnthropicCatalog &&
+    next.FX_E2E_NO_GROK_AUTH !== "1" &&
     !existsSync(join(next.HOME, ".fx", "providers.json"))
   ) {
     writeE2eAnthropicProviders(next.HOME, next.ANTHROPIC_BASE_URL, model);

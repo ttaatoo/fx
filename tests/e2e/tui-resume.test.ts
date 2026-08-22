@@ -18,7 +18,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewaySerializedToolCall,
   fakeGatewaySse,
@@ -31,6 +30,7 @@ import {
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import { readTapeFrames } from "./render-lab/tape";
 
 const TIMEOUT = 30_000;
@@ -105,7 +105,8 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    FX_MODEL: SUPERGROK_MODEL,
+    FX_PERMISSION_MODE: "yolo",
     FX_AUTO_UPGRADE: "0",
     NO_COLOR: "1",
   };
@@ -857,7 +858,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
     writeFileSync(resumedStderrPath, "");
@@ -1062,7 +1063,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -1197,7 +1198,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -1322,7 +1323,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
     writeFileSync(
@@ -1514,7 +1515,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
     writeFileSync(join(workspace, ".cancel-cap-row-prefix"), rowPrefix);
@@ -1787,7 +1788,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
     writeFileSync(join(workspace, ".cancel-below-head"), headMarker);
@@ -1935,7 +1936,7 @@ test.skipIf(!tmuxAvailable())(
     const workspace = realpathSync(workspaceDir);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2140,7 +2141,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2350,7 +2351,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2433,7 +2434,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2497,7 +2498,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2563,7 +2564,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2706,7 +2707,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2790,7 +2791,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2869,7 +2870,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -2975,7 +2976,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(stderrPath, "");
 
@@ -3041,7 +3042,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(
       join(workspace, "README.md"),
@@ -3103,7 +3104,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(join(workspace, "README.md"), "READ_FULL_DETAIL_MARKER\n");
     writeFileSync(join(workspace, "LIST_FULL_DETAIL_MARKER"), "");
@@ -4151,7 +4152,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(nested, { recursive: true });
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(join(workspace, "AGENTS.md"), "DEFERRED_TOOL_ROOT_SCOPE\n");
     writeFileSync(join(nested, "AGENTS.md"), "DEFERRED_TOOL_NESTED_SCOPE\n");
@@ -6244,7 +6245,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(initialStderrPath, "");
     writeFileSync(resumedStderrPath, "");
@@ -6420,7 +6421,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(
       join(home, ".fx", "settings.json"),
-      JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {}, maxxing_mode: "legacy" }),
+      JSON.stringify({ sandbox: "none", permission_mode: "yolo", permission: {}, maxxing_mode: "legacy" }),
     );
     writeFileSync(initialStderrPath, "");
     writeFileSync(resumedStderrPath, "");

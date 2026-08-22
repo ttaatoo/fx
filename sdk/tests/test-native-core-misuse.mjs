@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createSdkHome, openaiSseChunks, SUPERGROK_MODEL } from "./supergrok-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
@@ -98,11 +99,13 @@ assert.throws(
   (error) => error.code === "LIBFX_NATIVE_CLOSED",
 );
 
+const sdkHome = createSdkHome();
+process.env.HOME = sdkHome;
 const lifecycleCore = addon.createCore({
   apiKey: "lifecycle-test-key",
-  model: "native/test-model",
-  home: "/tmp",
-  workspaceRoot: "/tmp",
+  model: SUPERGROK_MODEL,
+  home: sdkHome,
+  workspaceRoot: sdkHome,
   gatewayChatUrl: "http://127.0.0.1:31337/chat",
 });
 let nextId = 1;
@@ -140,11 +143,7 @@ const takeFetch = async () => {
     await new Promise((resolveWait) => setTimeout(resolveWait, 2));
   }
 };
-const responseBytes = (text) => Buffer.from([
-  `data: ${JSON.stringify({ type: "text-delta", delta: text })}\n\n`,
-  'data: {"type":"finish","finishReason":{"unified":"stop","raw":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":1}}}\n\n',
-  "data: [DONE]\n\n",
-].join(""));
+const responseBytes = (text) => Buffer.from(openaiSseChunks([text]));
 const sendPrompt = (sessionId, text) => send("session/prompt", {
   sessionId,
   prompt: [{ type: "text", text }],

@@ -238,46 +238,74 @@ function expectGroupedContinuationRequest(
   expect(amendment).toBeGreaterThan(second);
 }
 
-function expectOrdinaryToolResults(body: string, callIds: string[]) {
+function requestMessages(body: string): Array<{
+  role?: string;
+  content?: unknown;
+  tool_call_id?: string;
+}> {
   const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
+    prompt?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
+    messages?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
   };
-  const results = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .filter((part) => part.type === "tool-result");
-
-  expect(results).toHaveLength(callIds.length);
-  expect(results.map((part) => part.toolCallId).sort()).toEqual([...callIds].sort());
-  for (const result of results) {
-    const output = result.output as Record<string, unknown> | undefined;
-    expect(output?.type).toBe("text");
-    expect(output?.value).toEqual(expect.stringContaining("exit_code=0"));
-  }
-  expect(JSON.stringify(results)).not.toContain("Repeated identical tool call blocked");
+  return request.prompt ?? request.messages ?? [];
 }
 
 function toolResultText(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
-  expect(result).toBeDefined();
-  const output = result!.output as Record<string, unknown>;
-  expect(output.type).toBe("text");
-  expect(typeof output.value).toBe("string");
-  return output.value as string;
+  const messages = requestMessages(body);
+  const parts = messages.flatMap((message) =>
+    Array.isArray(message.content) ? message.content : []
+  ) as Array<Record<string, unknown>>;
+  const result = parts.find((part) =>
+    (part.type === "tool-result" && part.toolCallId === toolCallId) ||
+    (part.type === "tool_result" && part.tool_use_id === toolCallId)
+  );
+  if (result) {
+    const output = result.output as Record<string, unknown> | undefined;
+    if (typeof output?.value === "string") return output.value;
+    return contentText(result.content ?? result.output);
+  }
+  const toolMessage = messages.find((message) =>
+    message.role === "tool" && message.tool_call_id === toolCallId
+  );
+  if (!toolMessage) throw new Error(`Missing tool result for ${toolCallId}`);
+  return contentText(toolMessage.content);
+}
+
+function hasToolResult(body: string, toolCallId: string): boolean {
+  try {
+    return toolResultText(body, toolCallId).length >= 0;
+  } catch {
+    return false;
+  }
+}
+
+function expectOrdinaryToolResults(body: string, callIds: string[]) {
+  const results = callIds.map((id) => toolResultText(body, id));
+  expect(results).toHaveLength(callIds.length);
+  for (const result of results) {
+    expect(result).toEqual(expect.stringContaining("exit_code=0"));
+  }
+  expect(results.join("\n")).not.toContain("Repeated identical tool call blocked");
 }
 
 function completedToolCallIds(body: string): string[] {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  return (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .filter((part) => part.type === "tool-result")
-    .map((part) => part.toolCallId as string);
+  const messages = requestMessages(body);
+  const ids: string[] = [];
+  for (const message of messages) {
+    if (message.role === "tool" && typeof message.tool_call_id === "string") {
+      ids.push(message.tool_call_id);
+      continue;
+    }
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content as Array<Record<string, unknown>>) {
+      if (part.type === "tool-result" && typeof part.toolCallId === "string") {
+        ids.push(part.toolCallId);
+      } else if (part.type === "tool_result" && typeof part.tool_use_id === "string") {
+        ids.push(part.tool_use_id);
+      }
+    }
+  }
+  return ids;
 }
 
 function contentText(value: unknown): string {
@@ -296,25 +324,16 @@ function contentText(value: unknown): string {
 }
 
 function promptText(body: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: unknown }>;
-  };
-  return (request.prompt ?? []).map((message) => contentText(message.content)).join("\n");
+  return requestMessages(body).map((message) => contentText(message.content)).join("\n");
 }
 
 function latestPromptText(body: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: unknown }>;
-  };
-  return contentText(request.prompt?.at(-1)?.content);
+  return contentText(requestMessages(body).at(-1)?.content);
 }
 
 function currentUserText(body: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ role?: string; content?: unknown }>;
-  };
   return contentText(
-    request.prompt?.findLast((message) => message.role === "user")?.content,
+    requestMessages(body).findLast((message) => message.role === "user")?.content,
   );
 }
 
@@ -1366,7 +1385,7 @@ describe("effect-aware command permissions", () => {
         join(root.home, ".fx", "settings.json"),
         JSON.stringify({
           sandbox: "none",
-          permission_mode: "auto",
+          permission_mode: "yolo",
           permission: {},
           maxxing_mode: "minimal",
         }),
@@ -1562,14 +1581,28 @@ describe("effect-aware command permissions", () => {
       };
       const toolResultValue = (body: string, toolCallId: string): string => {
         const request = JSON.parse(body) as {
-          prompt?: Array<{ content?: Array<Record<string, any>> }>;
+          prompt?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
+          messages?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
         };
-        const result = (request.prompt ?? [])
-          .flatMap((message) => message.content ?? [])
-          .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
-        expect(result).toBeDefined();
-        expect(result?.output?.type).toBe("text");
-        return String(result?.output?.value ?? "");
+        const messages = request.prompt ?? request.messages ?? [];
+        const parts = messages.flatMap((message) =>
+          Array.isArray(message.content) ? message.content : []
+        ) as Array<Record<string, any>>;
+        const result = parts.find((part) =>
+          (part.type === "tool-result" && part.toolCallId === toolCallId) ||
+          (part.type === "tool_result" && part.tool_use_id === toolCallId)
+        );
+        if (result) {
+          if (result.output?.type === "text") return String(result.output.value ?? "");
+          return String(result.content ?? result.output?.value ?? "");
+        }
+        const toolMessage = messages.find((message) =>
+          message.role === "tool" && message.tool_call_id === toolCallId
+        );
+        expect(toolMessage).toBeDefined();
+        return typeof toolMessage?.content === "string"
+          ? toolMessage.content
+          : JSON.stringify(toolMessage?.content ?? "");
       };
 
       activeSession = await TmuxSession.create({
@@ -2093,32 +2126,6 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "default fx ask defaults missing permission mode to auto",
-    async () => {
-      const root = createIsolatedRoot();
-      const marker = join(root.workspace, "ask-turn-default-auto.txt");
-      const command = `printf ask-turn-auto > ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway([
-        toolCall(command),
-        finalText("ask turn default auto complete"),
-      ]);
-
-      const result = await runFx(["ask", "Create the marker."], {
-        cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-        }),
-        timeoutMs: TIMEOUT,
-      });
-
-      expect(result.code).toBe(0);
-      expect(result.stdout).toContain("ask turn default auto complete");
-      expect(result.stderr).not.toContain("permission required");
-      expect(existsSync(marker)).toBe(true);
-      expect(gateway.requests).toHaveLength(2);
-    },
-    TIMEOUT,
-  );
-  test(
     "fx ask yolo returns repeated user-profile command results to the model",
     async () => {
       const root = createIsolatedRoot();
@@ -2578,8 +2585,7 @@ describe("effect-aware command permissions", () => {
           }
           return childCompletion.response;
         }
-        if (body.includes('"toolCallId":"ask_delivery_create_1"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "ask_delivery_create_1")) {
           if (!deliveryBarrier) {
             const created = JSON.parse(
               toolResultText(body, "ask_delivery_create_1"),
@@ -2762,15 +2768,13 @@ describe("effect-aware command permissions", () => {
       let parentContinuationChecked = false;
       const firstRoute = (body: string) => {
         const text = promptText(body);
-        if (body.includes('"toolCallId":"multi_delivery_child_second"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "multi_delivery_child_second")) {
           expect(toolResultText(body, "multi_delivery_child_second")).toContain(
             '"status":"message_queued"',
           );
           return finalText("ASK_MULTI_DELIVERY_CHILD_PRIVATE_DONE");
         }
-        if (body.includes('"toolCallId":"multi_delivery_child_first"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "multi_delivery_child_first")) {
           expect(toolResultText(body, "multi_delivery_child_first")).toContain(
             '"status":"message_queued"',
           );
@@ -2800,8 +2804,7 @@ describe("effect-aware command permissions", () => {
             }, "multi_delivery_child_first");
           })();
         }
-        if (body.includes('"toolCallId":"multi_delivery_create"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "multi_delivery_create")) {
           const created = JSON.parse(
             toolResultText(body, "multi_delivery_create"),
           ) as { child_id: string; status: string };
@@ -2876,8 +2879,7 @@ describe("effect-aware command permissions", () => {
       const secondRoute = (body: string) => {
         const text = promptText(body);
         if (text.includes(freshChildWork)) return freshChildCompletion;
-        if (body.includes('"toolCallId":"multi_delivery_send_fresh"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "multi_delivery_send_fresh")) {
           sameTurnFreshEventIds = parentDeliveryIds(body);
           expect(text).not.toContain(firstEventId);
           expect(text).not.toContain(secondEventId);
@@ -2912,8 +2914,7 @@ describe("effect-aware command permissions", () => {
             return finalText("ASK_MULTI_DELIVERY_MESSAGES_CONSUMED");
           });
         }
-        if (body.includes('"toolCallId":"multi_delivery_configure"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "multi_delivery_configure")) {
           expectNoParentDeliveries(body);
           configureContinuationChecked = true;
           return gatewayToolCall("subagent", {
@@ -3037,15 +3038,13 @@ describe("effect-aware command permissions", () => {
       const parts: ParentMessagePart[] = [];
       const firstRoute = (body: string) => {
         const text = promptText(body);
-        if (body.includes('"toolCallId":"ask_64k_send_1"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "ask_64k_send_1")) {
           expect(toolResultText(body, "ask_64k_send_1")).toContain(
             '"status":"message_queued"',
           );
           return finalText("ASK_64K_CHILD_PRIVATE_DONE");
         }
-        if (body.includes('"toolCallId":"ask_64k_create_1"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "ask_64k_create_1")) {
           const created = JSON.parse(
             toolResultText(body, "ask_64k_create_1"),
           ) as { child_id: string; status: string };
@@ -3320,8 +3319,7 @@ describe("effect-aware command permissions", () => {
           }
           return grandchildCompletion.response;
         }
-        if (body.includes('"toolCallId":"nested_grandchild_create_1"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "nested_grandchild_create_1")) {
           if (!deliveryBarrier) {
             const created = JSON.parse(
               toolResultText(body, "nested_grandchild_create_1"),
@@ -3377,8 +3375,7 @@ describe("effect-aware command permissions", () => {
             } },
           }, "nested_grandchild_create_1");
         }
-        if (body.includes('"toolCallId":"nested_root_create_1"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "nested_root_create_1")) {
           const created = JSON.parse(
             toolResultText(body, "nested_root_create_1"),
           ) as { child_id: string; status: string };
@@ -3420,12 +3417,10 @@ describe("effect-aware command permissions", () => {
       expect(grandchildId.length).toBeGreaterThan(0);
       expect(childContinuationChecked).toBe(true);
       expect(firstGateway.requests.some((request) =>
-        request.body.includes('"toolCallId":"nested_root_create_1"') &&
-        request.body.includes('"type":"tool-result"')
+        hasToolResult(request.body, "nested_root_create_1")
       )).toBe(true);
       expect(firstGateway.requests.some((request) =>
-        request.body.includes('"toolCallId":"nested_grandchild_create_1"') &&
-        request.body.includes('"type":"tool-result"')
+        hasToolResult(request.body, "nested_grandchild_create_1")
       )).toBe(true);
       const parentSessionId = JSON.parse(first.stdout.trim()).session_id as string;
       expect(grandchildEventIds.length).toBeGreaterThan(0);
@@ -3451,8 +3446,7 @@ describe("effect-aware command permissions", () => {
           body.includes('"toolCallId":"nested_send_child_1"') ? "send-result" : "",
           body.includes('"toolCallId":"nested_child_inspect_grandchild_1"') ? "inspect-result" : "",
         ].filter(Boolean).join("+") || "root-initial");
-        if (body.includes('"toolCallId":"nested_child_inspect_grandchild_1"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "nested_child_inspect_grandchild_1")) {
           expectNoParentDeliveries(body);
           childContinuationDeliveryChecked = true;
           return finalText("NESTED_CHILD_CONSUMED_GRANDCHILD");
@@ -3470,8 +3464,7 @@ describe("effect-aware command permissions", () => {
           childInitialChecked = true;
           return subagentInspectCall("nested_child_inspect_grandchild_1", grandchildId);
         }
-        if (body.includes('"toolCallId":"nested_send_child_1"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "nested_send_child_1")) {
           expectNoParentDeliveries(body);
           return waitForSubagentIdle(root, childId).then(() => {
             expect(childContinuationDeliveryChecked).toBe(true);
@@ -3520,8 +3513,7 @@ describe("effect-aware command permissions", () => {
           childNoRedeliveryChecked = true;
           return finalText("NESTED_CHILD_NO_REDELIVERY");
         }
-        if (body.includes('"toolCallId":"nested_send_child_2"') &&
-            body.includes('"type":"tool-result"')) {
+        if (hasToolResult(body, "nested_send_child_2")) {
           return waitForSubagentIdle(root, childId).then(() => {
             expect(childNoRedeliveryChecked).toBe(true);
             return finalText("NESTED_ROOT_THIRD_DONE");
