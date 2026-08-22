@@ -230,23 +230,10 @@ pub fn loadFromHomeDir(alloc: Allocator, home: []const u8) !Catalog {
         try ensureDefaultAnthropic(&catalog);
         return catalog;
     } else |err| switch (err) {
-        error.FileNotFound => {},
+        error.FileNotFound, error.DurablePathUnsafe => {},
         else => return err,
     }
 
-    const settings_path = try profile_paths.settingsPath(alloc, home);
-    defer alloc.free(settings_path);
-    if (readOptionalJson(alloc, settings_path)) |bytes| {
-        defer alloc.free(bytes);
-        var catalog = try parseProvidersDocument(alloc, bytes);
-        errdefer catalog.deinit();
-        try ensureDefaultXai(&catalog);
-        try ensureDefaultAnthropic(&catalog);
-        return catalog;
-    } else |err| switch (err) {
-        error.FileNotFound => {},
-        else => return err,
-    }
     var catalog = Catalog.empty(alloc);
     errdefer catalog.deinit();
     try ensureDefaultXai(&catalog);
@@ -489,8 +476,8 @@ fn retain(catalog: *Catalog, value: []const u8) ![]u8 {
 }
 
 fn readOptionalJson(alloc: Allocator, path: []const u8) ![]u8 {
-    var file = std.Io.Dir.openFileAbsolute(io_mod.getIo(), path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return error.FileNotFound,
+    var file = io_mod.openExistingRegularFile(std.Io.Dir.cwd(), path, .read_only) catch |err| switch (err) {
+        error.FileNotFound, error.DurablePathUnsafe => return error.FileNotFound,
         else => return err,
     };
     defer file.close(io_mod.getIo());
@@ -624,6 +611,33 @@ test "loopback SuperGrok proxy env wins over a baked-in production base URL" {
         "http://127.0.0.1:43721/v1",
         catalog.findByProvider(.xai).?.resolvedBaseUrl(),
     );
+}
+
+test "FIFO settings.json does not block SuperGrok catalog load" {
+    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const settings_path = try std.fs.path.join(alloc, &.{ home, ".fx", "settings.json" });
+    defer alloc.free(settings_path);
+    const settings_z = try alloc.dupeZ(u8, settings_path);
+    defer alloc.free(settings_z);
+    try std.posix.mkfifo(settings_z, 0o644);
+
+    var environ = std.process.Environ.Map.init(alloc);
+    defer environ.deinit();
+    try environ.put("HOME", home);
+    io_mod.setEnvironMap(&environ);
+    const restore_env = try stableEmptyTestEnviron();
+    defer io_mod.setEnvironMap(restore_env);
+
+    var catalog = try loadFromHomeDir(alloc, home);
+    defer catalog.deinit();
+    try std.testing.expectEqual(@as(usize, 0), catalog.entries.len);
 }
 
 test "startup overlay prefers FX_MODEL matches and usable direct providers" {

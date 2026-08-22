@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const build_options = @import("build_options");
 const agent_stream_provider = @import("../core/agent/stream_provider.zig");
 const debug_trace = @import("../core/shared/debug_trace.zig");
@@ -312,8 +313,14 @@ pub fn spawnHttpCancelWatcher(
     done: *std.atomic.Value(bool),
     cancel_flag: *std.atomic.Value(bool),
     stream: std.Io.net.Stream,
-) !std.Thread {
-    return std.Thread.spawn(.{}, HttpCancelWatcher.run, .{ done, cancel_flag, @as(?*std.atomic.Value(bool), null), stream });
+) !?std.Thread {
+    if (comptime builtin.single_threaded) return null;
+    return try std.Thread.spawn(.{}, HttpCancelWatcher.run, .{
+        done,
+        cancel_flag,
+        @as(?*std.atomic.Value(bool), null),
+        stream,
+    });
 }
 
 test "suspend gap classification compares boot and awake clocks" {
