@@ -25,6 +25,8 @@ import {
   hasEmptyComposer,
   isEmptyComposerLine,
   isVolatileTokenStatusRow,
+  openAiSseStop,
+  openAiSseTextDelta,
   paneExitMatches,
   startFakeGateway,
   TmuxSession,
@@ -179,9 +181,7 @@ function heldGatewayResponse(state: HoldState): Response {
       start(controller) {
         state.started = true;
         controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({ type: "text-delta", id: "held", delta: "SESSION_PICKER_ACTIVE_STREAM" })}\n\n`,
-          ),
+          encoder.encode(openAiSseTextDelta("SESSION_PICKER_ACTIVE_STREAM")),
         );
         timer = setInterval(() => {
           controller.enqueue(encoder.encode(": keep-alive\n\n"));
@@ -203,25 +203,10 @@ function streamedTextResponse(text: string): Response {
       async start(controller) {
         for (let offset = 0; offset < text.length; offset += 24) {
           const delta = text.slice(offset, offset + 24);
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "text-delta", id: "answer_1", delta })}\n\n`,
-            ),
-          );
+          controller.enqueue(encoder.encode(openAiSseTextDelta(delta)));
           await Bun.sleep(10);
         }
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              type: "finish",
-              finishReason: { unified: "stop", raw: "stop" },
-              usage: {
-                inputTokens: { total: 3 },
-                outputTokens: { total: 5 },
-              },
-            })}\n\ndata: [DONE]\n\n`,
-          ),
-        );
+        controller.enqueue(encoder.encode(openAiSseStop()));
         controller.close();
       },
     }),
@@ -3409,15 +3394,10 @@ test.skipIf(!tmuxAvailable())(
         new ReadableStream<Uint8Array>({
           async start(controller) {
             for (const chunk of chunks) {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-delta", id: "answer_1", delta: chunk })}\n\n`));
+              controller.enqueue(encoder.encode(openAiSseTextDelta(chunk)));
               await Bun.sleep(10);
             }
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-              type: "finish",
-              finishReason: { unified: "stop", raw: "stop" },
-              usage: { inputTokens: { total: 3 }, outputTokens: { total: 5 } },
-            })}\n\n`));
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.enqueue(encoder.encode(openAiSseStop()));
             controller.close();
           },
         }),

@@ -295,6 +295,27 @@ function openaiSseFromLegacyEvents(events: object[]): string {
   return parts.join("");
 }
 
+export function openAiSseTextDelta(delta: string): string {
+  return sseData({
+    id: "chatcmpl_e2e",
+    object: "chat.completion.chunk",
+    choices: [{
+      index: 0,
+      delta: { content: delta },
+      finish_reason: null,
+    }],
+  });
+}
+
+export function openAiSseStop(): string {
+  return sseData({
+    id: "chatcmpl_e2e",
+    object: "chat.completion.chunk",
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    usage: { prompt_tokens: 3, completion_tokens: 5 },
+  }) + "data: [DONE]\n\n";
+}
+
 const fakeCompletionEvents = new WeakMap<Response, object[]>();
 
 export function fakeGatewaySse(events: object[]) {
@@ -305,7 +326,7 @@ export function fakeGatewaySse(events: object[]) {
   return response;
 }
 
-function completionResponseForPath(path: string, response: Response): Response {
+export function completionResponseForPath(path: string, response: Response): Response {
   const events = fakeCompletionEvents.get(response);
   if (!events) return response;
   if (path.includes("chat/completions")) {

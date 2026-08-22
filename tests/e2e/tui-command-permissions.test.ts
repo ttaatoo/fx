@@ -21,7 +21,9 @@ import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
 import {
   classifierEvidenceFromRequest,
+  completionResponseForPath,
   fakeGatewayPermissionDecision,
+  fakeGatewaySse,
   heldFakeGatewayFinalText,
   isVolatileTokenStatusRow,
   startDynamicFakeGateway,
@@ -95,10 +97,7 @@ afterEach(async () => {
 });
 
 function sse(events: object[]) {
-  return new Response(
-    `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
-    { headers: { "content-type": "text/event-stream" } },
-  );
+  return fakeGatewaySse(events);
 }
 
 function gatewayToolCall(toolName: string, input: object, toolCallId: string) {
@@ -735,7 +734,8 @@ function startFakeGateway(
       requests.push({ body, headers: req.headers });
       const response = responses.shift();
       if (!response) return new Response("unexpected request", { status: 500 });
-      return typeof response === "function" ? await response(body) : response;
+      const resolved = typeof response === "function" ? await response(body) : response;
+      return completionResponseForPath(url.pathname, resolved);
     },
   });
   const gateway = {
