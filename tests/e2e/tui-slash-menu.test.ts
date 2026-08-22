@@ -2734,7 +2734,18 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await waitForModelsMenu(session, 2);
       await session.sendKeys("Down");
       await session.sendKeys("Enter");
-      await session.waitForText(`● Switched to ${SUPERGROK_FAST_MODEL}`, 5_000);
+      // SuperGrok catalog models always expose low/medium/high effort. Selecting
+      // grok-code-fast-1 opens that submenu instead of switching immediately.
+      await session.waitForPane(
+        (current) =>
+          composerContains(current, `/model ${SUPERGROK_FAST_MODEL}`) &&
+          current.includes("default") &&
+          current.includes("high") &&
+          !current.includes("Models 2"),
+        5_000,
+      );
+      await session.sendKeys("Enter");
+      await session.waitForText(`● Switched to ${SUPERGROK_FAST_MODEL}`, TIMEOUT);
 
       const settings = JSON.parse(readFileSync(fixture.settingsPath, "utf8")) as { model?: string };
       expect(settings.model).toBe(SUPERGROK_FAST_MODEL);
