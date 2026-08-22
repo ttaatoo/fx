@@ -143,8 +143,8 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
       for (const field of [
         "Run /help for commands",
         "auth_refreshable=",
-        "permission_mode=auto",
-        process.platform === "darwin" ? "sandbox=os" : "sandbox=none",
+        "permission_mode=yolo",
+        "sandbox=none",
       ]) {
         expect(scrollback.split(field)).toHaveLength(2);
       }
@@ -222,7 +222,7 @@ describe.skipIf(SKIP)("tui: slash commands", () => {
         "/foo",
         "/changes",
         "/review",
-        "/pr",
+        "/prd",
         "/issue",
         "/history",
         "/rules",

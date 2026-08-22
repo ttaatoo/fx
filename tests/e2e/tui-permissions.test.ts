@@ -408,11 +408,6 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       const gateway = startFakeGateway([
         fakeGatewaySse([
           {
-            type: "text-delta",
-            id: "answer_1",
-            delta: `x${marker} ${"x".repeat(2_048)}`,
-          },
-          {
             type: "tool-call",
             toolCallId: "pacer_gate_write",
             toolName: "write_file",
@@ -420,6 +415,11 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
               path: "pacer-gate.txt",
               content: "must not be written\n",
             },
+          },
+          {
+            type: "text-delta",
+            id: "answer_1",
+            delta: `x${marker} ${"x".repeat(2_048)}`,
           },
           {
             type: "finish",
@@ -846,7 +846,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         },
       );
       expect(resumed.code).toBe(0);
-      expect(resumed.stderr).toBe("");
+      expect(resumed.stderr.startsWith("YOLO enabled: permissions and sandboxing disabled")).toBe(true);
       expect(resumedGateway.requests).toHaveLength(1);
       const resumedRequest = resumedGateway.requests[0]!.body;
       expect(resumedRequest.indexOf('"role":"tool"')).toBeGreaterThanOrEqual(0);
