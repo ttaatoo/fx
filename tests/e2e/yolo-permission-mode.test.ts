@@ -11,8 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
+import { SUPERGROK_MODEL, writeE2eGrokAuth } from "./direct-provider-env";
 import {
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewayToolCall,
   startFakeGateway,
@@ -49,6 +49,7 @@ function createFixture(prefix: string) {
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fx"), { recursive: true });
   mkdirSync(workspace);
+  writeE2eGrokAuth(home);
   tempRoots.push(root);
   return {
     root,
@@ -95,7 +96,7 @@ describe("yolo permission mode", () => {
             FX_AUTO_UPGRADE: "0",
             FX_GATEWAY_BASE_URL: fake.baseUrl,
             FX_GATEWAY_CHAT_URL: fake.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
+            FX_MODEL: SUPERGROK_MODEL,
             FX_TRACE_LOG: tracePath,
             FX_TRACE_SCOPES: "permission",
           },

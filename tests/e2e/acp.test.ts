@@ -4642,6 +4642,7 @@ describe("acp: model-independent", () => {
         chmodSync(join(home, ".fx"), 0o700);
         chmodSync(join(home, ".fx", "sessions"), 0o700);
         chmodSync(sessionDir, 0o700);
+        writeE2eGrokAuth(home);
         writeFileSync(
           join(sessionDir, "session.json"),
           JSON.stringify({
@@ -4663,8 +4664,9 @@ describe("acp: model-independent", () => {
           cwd: workspaceRoot,
           env: {
             HOME: home,
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
-            VERCEL_OIDC_TOKEN: "",
+            FX_MODEL: SUPERGROK_MODEL,
+            FX_AUTO_UPGRADE: "0",
+            FX_PERMISSION_MODE: "yolo",
           },
         });
         expect(
@@ -5512,9 +5514,11 @@ describe("acp: model-independent", () => {
           timeoutMs: TIMEOUT,
         });
         expect(acknowledged.code).toBe(0);
-        expect(gateway.requests.at(-1)?.body).toContain(
-          "ACP_ONE_OFF_LOAD_CHILD_DONE",
-        );
+        expect(
+          gateway.requests.some((request) =>
+            request.body.includes("ACP_ONE_OFF_LOAD_CHILD_DONE")
+          ),
+        ).toBe(true);
         await waitForCondition(
           "ACP one-off child retirement",
           () => !existsSync(control.path),

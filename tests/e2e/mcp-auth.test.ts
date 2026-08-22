@@ -22,15 +22,17 @@ import {
   startLegacyStreamableHttpFixture,
 } from "./fixtures/mcp-legacy-remote";
 import { startModernMcpHttpFixture } from "./fixtures/mcp-modern-http";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import {
   fakeGatewayFinalText,
   fakeGatewayToolCall,
   startFakeGateway,
+  toolResultOutputFromBody,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const MODEL = "openai/gpt-5";
+const MODEL = SUPERGROK_MODEL;
 const TOOL_NAME = "mcp_fixture_echo";
 const ACCESS_INITIAL = "mcp-access-initial-secret";
 const ACCESS_REFRESHED = "mcp-access-refreshed-secret";
@@ -688,20 +690,7 @@ function collectRegularFiles(root: string): string[] {
 }
 
 function toolResultText(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) =>
-      part.type === "tool-result" && part.toolCallId === toolCallId
-    );
-  if (!result) throw new Error(`Missing tool result for ${toolCallId}`);
-  const output = result.output as Record<string, unknown>;
-  if (output.type !== "text" || typeof output.value !== "string") {
-    throw new Error(`Invalid tool result for ${toolCallId}`);
-  }
-  return output.value;
+  return toolResultOutputFromBody(body, toolCallId);
 }
 
 function preserveAuthFailure(
