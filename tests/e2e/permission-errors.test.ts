@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
-import { SUPERGROK_MODEL } from "./direct-provider-env";
+import { SUPERGROK_MODEL, writeE2eGrokAuth } from "./direct-provider-env";
 import {
   fakeGatewayFinalText,
   fakeGatewayPermissionDecision,
@@ -45,6 +45,7 @@ function createIsolatedRoot(prefix: string) {
   mkdirSync(home, { recursive: true });
   mkdirSync(join(home, ".fx"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
+  writeE2eGrokAuth(home);
   return { root, home, workspace };
 }
 

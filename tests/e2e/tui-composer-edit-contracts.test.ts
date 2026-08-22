@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
-import { SUPERGROK_MODEL } from "./direct-provider-env";
+import { SUPERGROK_MODEL, writeE2eGrokAuth } from "./direct-provider-env";
 import {
   fakeGatewayFinalText,
   startFakeGateway,
@@ -58,6 +58,7 @@ async function startFx(
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fx"), { recursive: true });
   mkdirSync(workspace);
+  writeE2eGrokAuth(home);
   writeFileSync(
     join(home, ".fx", "settings.json"),
     JSON.stringify({ maxxing_mode: "legacy" }),

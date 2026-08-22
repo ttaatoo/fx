@@ -14,8 +14,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import {
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText as finalText,
   fakeGatewaySse,
   fakeGatewayToolCall as toolCall,
@@ -101,7 +101,7 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    FX_MODEL: SUPERGROK_MODEL,
     FX_PERMISSION_MODE: "ask",
     FX_AUTO_UPGRADE: "0",
     NO_COLOR: "1",

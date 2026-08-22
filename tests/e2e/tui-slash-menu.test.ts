@@ -22,7 +22,6 @@ import {
 } from "./direct-provider-env";
 import {
   composerContains,
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewayToolCall,
   hasEmptyComposer,
@@ -342,8 +341,12 @@ function nestedText(content: unknown): string {
 }
 
 function gatewayPromptText(body: string): string {
-  const request = JSON.parse(body) as { prompt: Array<{ content: unknown }> };
-  return request.prompt.map((message) => nestedText(message.content)).join("\n");
+  const request = JSON.parse(body) as {
+    prompt?: Array<{ content?: unknown }>;
+    messages?: Array<{ content?: unknown }>;
+  };
+  const messages = request.messages ?? request.prompt ?? [];
+  return messages.map((message) => nestedText(message.content)).join("\n");
 }
 
 function countOccurrences(text: string, needle: string): number {
@@ -613,7 +616,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
+          FX_MODEL: SUPERGROK_MODEL,
           FX_AUTO_UPGRADE: "0",
         },
         width: 120,
@@ -2834,7 +2837,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
+          FX_MODEL: SUPERGROK_MODEL,
           FX_AUTO_UPGRADE: "0",
         },
         width: 120,
@@ -2883,7 +2886,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
+          FX_MODEL: SUPERGROK_MODEL,
           FX_AUTO_UPGRADE: "0",
         },
         width: 72,
@@ -2946,7 +2949,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
+          FX_MODEL: SUPERGROK_MODEL,
           FX_PERMISSION_MODE: "ask",
           FX_AUTO_UPGRADE: "0",
         },
@@ -2995,7 +2998,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
             AI_GATEWAY_API_KEY: "fake-skill-token-key",
             FX_GATEWAY_BASE_URL: gateway.baseUrl,
             FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
+            FX_MODEL: SUPERGROK_MODEL,
             FX_AUTO_UPGRADE: "0",
           },
           width: 120,
@@ -3061,7 +3064,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
             AI_GATEWAY_API_KEY: "fake-mention-guard-key",
             FX_GATEWAY_BASE_URL: gateway.baseUrl,
             FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
+            FX_MODEL: SUPERGROK_MODEL,
             FX_AUTO_UPGRADE: "0",
           },
           width: 120,
@@ -3110,7 +3113,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
             AI_GATEWAY_API_KEY: "fake-mention-space-key",
             FX_GATEWAY_BASE_URL: gateway.baseUrl,
             FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
+            FX_MODEL: SUPERGROK_MODEL,
             FX_AUTO_UPGRADE: "0",
           },
           width: 120,
@@ -3155,7 +3158,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
           AI_GATEWAY_API_KEY: "fake-exact-picker-key",
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
+          FX_MODEL: SUPERGROK_MODEL,
           FX_AUTO_UPGRADE: "0",
           FX_TRACE_LOG: tracePath,
           FX_TRACE_SCOPES: "skill,skills,agent,core",

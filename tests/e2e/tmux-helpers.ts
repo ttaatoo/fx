@@ -223,9 +223,13 @@ function anthropicSseFromLegacyEvents(events: object[]): string {
 function openaiSseFromLegacyEvents(events: object[]): string {
   const parts: string[] = [];
   let toolIndex = 0;
+  let pendingToolName: string | undefined;
+  let pendingToolId: string | undefined;
+  let pendingToolArgs = "";
   for (const event of events) {
     const item = event as {
       type?: string;
+      id?: string;
       delta?: string;
       toolCallId?: string;
       toolName?: string;
@@ -248,10 +252,23 @@ function openaiSseFromLegacyEvents(events: object[]): string {
       }));
       continue;
     }
+    if (item.type === "tool-input-start") {
+      pendingToolName = item.toolName;
+      pendingToolId = item.id;
+      pendingToolArgs = "";
+      continue;
+    }
+    if (item.type === "tool-input-delta") {
+      pendingToolArgs += item.delta ?? "";
+      continue;
+    }
+    if (item.type === "tool-input-end") {
+      continue;
+    }
     if (item.type === "tool-call") {
-      const input = typeof item.input === "string"
-        ? item.input
-        : JSON.stringify(item.input ?? {});
+      const input = item.input !== undefined
+        ? (typeof item.input === "string" ? item.input : JSON.stringify(item.input ?? {}))
+        : (pendingToolArgs.length > 0 ? pendingToolArgs : "{}");
       parts.push(sseData({
         id: "chatcmpl_e2e",
         object: "chat.completion.chunk",
@@ -260,10 +277,10 @@ function openaiSseFromLegacyEvents(events: object[]): string {
           delta: {
             tool_calls: [{
               index: toolIndex,
-              id: item.toolCallId ?? `tool_${toolIndex}`,
+              id: item.toolCallId ?? pendingToolId ?? `tool_${toolIndex}`,
               type: "function",
               function: {
-                name: item.toolName ?? "unknown",
+                name: item.toolName ?? pendingToolName ?? "unknown",
                 arguments: input,
               },
             }],
@@ -272,6 +289,9 @@ function openaiSseFromLegacyEvents(events: object[]): string {
         }],
       }));
       toolIndex += 1;
+      pendingToolName = undefined;
+      pendingToolId = undefined;
+      pendingToolArgs = "";
       continue;
     }
     if (item.type === "finish") {
