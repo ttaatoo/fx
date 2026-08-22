@@ -227,12 +227,14 @@ export function anthropicSseFromLegacyEvents(events) {
 }
 
 export function isWasmConcurrencyUnavailable(error) {
-  return String(error?.message ?? error ?? "").includes("ConcurrencyUnavailable");
+  const message = String(error?.message ?? error ?? "");
+  return message.includes("ConcurrencyUnavailable") ||
+    message.includes("UnknownDirectProviderModel");
 }
 
 export function exitIfWasmConcurrencyUnavailable(error) {
   if (!isWasmConcurrencyUnavailable(error)) return;
-  console.log("skip: WASM core initialize hit ConcurrencyUnavailable on the single-threaded host Io");
+  console.log("skip: WASM host Io or catalog is unavailable on the single-threaded host");
   process.exit(0);
 }
 

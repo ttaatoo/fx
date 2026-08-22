@@ -15,6 +15,7 @@ function runWorker(index) {
   return new Promise((resolveWorker, reject) => {
     const worker = new Worker(`
       const { parentPort, workerData } = require("node:worker_threads");
+      process.env.HOME = workerData.home;
       const addon = require(workerData.addonPath);
       const core = addon.createCore({
         apiKey: "worker-test-key",
@@ -36,7 +37,11 @@ function runWorker(index) {
       addon.closeCore(core);
       addon.destroyCore(core);
       parentPort.postMessage(output);
-    `, { eval: true, workerData: { addonPath, index, home, model: SUPERGROK_MODEL } });
+    `, {
+      eval: true,
+      env: { ...process.env, HOME: home },
+      workerData: { addonPath, index, home, model: SUPERGROK_MODEL },
+    });
     worker.once("message", (output) => resolveWorker(output));
     worker.once("error", reject);
     worker.once("exit", (code) => {

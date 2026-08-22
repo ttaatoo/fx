@@ -11,6 +11,7 @@ const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const addonPath = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/lib/libfx.node"));
 const addon = require(addonPath);
 const home = createSdkHome();
+process.env.HOME = home;
 
 function fdCount() {
   try { return readdirSync("/dev/fd").length; } catch { return null; }

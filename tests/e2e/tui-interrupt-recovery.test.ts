@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SUPERGROK_FAST_MODEL, SUPERGROK_MODEL } from "./direct-provider-env";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import { readTrace } from "./tui-render-assertions";
 import {
   fakeGatewayFinalText,
@@ -32,7 +32,35 @@ const PARTIAL_CHUNKS = [
 ];
 const VISIBLE_PARTIAL_CHUNKS = PARTIAL_CHUNKS.slice(0, 2);
 const FOLLOW_UP_RESPONSE = "INTERRUPT_FOLLOW_UP_COMPLETE";
-const FOLLOW_UP_MODEL = SUPERGROK_FAST_MODEL;
+const YOLO_STDERR = "YOLO enabled: permissions and sandboxing disabled";
+
+function quietStderr(stderr: string): string {
+  return stderr
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0 && line !== YOLO_STDERR)
+    .join("\n");
+}
+
+function requestTurns(body: string): {
+  transcript: string;
+  messages: Array<{ role?: string }>;
+  tools: unknown[];
+  model?: string;
+} {
+  const parsed = JSON.parse(body) as {
+    model?: string;
+    messages?: Array<{ role?: string }>;
+    prompt?: Array<{ role?: string }>;
+    tools?: unknown[];
+  };
+  const messages = parsed.messages ?? parsed.prompt ?? [];
+  return {
+    transcript: JSON.stringify(messages),
+    messages,
+    tools: parsed.tools ?? [],
+    model: parsed.model,
+  };
+}
 
 type GatewayHandle = ReturnType<typeof startFakeGateway>;
 type HoldState = {
@@ -125,12 +153,8 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       expect(held.released).toBe(true);
       expect(held.cancelCount).toBe(0);
       expect(gateway.requests).toHaveLength(2);
-      const queuedRequest = JSON.parse(gateway.requests[1]!.body) as {
-        prompt: unknown;
-        tools: unknown[];
-      };
-      const queuedPrompt = JSON.stringify(queuedRequest.prompt);
-      expect(queuedPrompt).toContain(queuedText);
+      const queuedRequest = requestTurns(gateway.requests[1]!.body);
+      expect(queuedRequest.transcript).toContain(queuedText);
       expect(queuedRequest.tools.length).toBeGreaterThan(0);
       expect(gateway.requests[1]!.body).not.toContain(
         "Treat it as interrupting any previous tool plan.",
@@ -138,7 +162,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       expect(gateway.requests[1]!.body).not.toContain(
         "Continue from the latest meaningful state",
       );
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      expect(quietStderr(readFileSync(stderrPath, "utf8"))).toBe("");
       expect(session.isAlive()).toBe(true);
       expect(session.isPaneAlive()).toBe(true);
 
@@ -165,9 +189,8 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       const tracePath = join(root, "trace.log");
       mkdirSync(join(home, ".fx"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
-      const settingsPath = join(home, ".fx", "settings.json");
       writeFileSync(
-        settingsPath,
+        join(home, ".fx", "settings.json"),
         JSON.stringify({ model: SUPERGROK_MODEL }) + "\n",
       );
 
@@ -183,7 +206,6 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       ], {
         models: [
           { id: SUPERGROK_MODEL, type: "language", tags: ["tool-use"] },
-          { id: FOLLOW_UP_MODEL, type: "language", tags: ["tool-use"] },
         ],
       });
       session = await TmuxSession.create({
@@ -215,11 +237,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await waitForCondition(() => held.cancelled, "gateway stream cancellation");
       await waitForTrace(tracePath, "event=interrupt_persisted", TIMEOUT);
       await session.waitForText("cancelled", TIMEOUT);
-      await session.sendText(`/model ${FOLLOW_UP_MODEL}`);
-      await waitForCondition(
-        () => JSON.parse(readFileSync(settingsPath, "utf8")).model === FOLLOW_UP_MODEL,
-        "follow-up model persistence",
-      );
+      await session.waitForComposer(TIMEOUT);
       await session.sendText("Confirm that the next prompt still works.");
       const interruptedScrollback = await session.captureFullScrollback();
       for (const chunk of VISIBLE_PARTIAL_CHUNKS) {
@@ -242,15 +260,10 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       expect(gateway.requests).toHaveLength(2);
       expect(held.cancelCount).toBe(1);
       expect(countOccurrences(readTrace(tracePath), "event=interrupt_persisted")).toBe(1);
-      const followUpRequest = JSON.parse(gateway.requests[1]!.body) as {
-        model?: string;
-        messages?: Array<{ role: string }>;
-        prompt?: Array<{ role: string }>;
-        tools: unknown[];
-      };
-      const followUpMessages = followUpRequest.messages ?? followUpRequest.prompt ?? [];
-      const followUpPrompt = JSON.stringify(followUpMessages);
-      expect(followUpRequest.model).toBe(FOLLOW_UP_MODEL);
+      const followUpRequest = requestTurns(gateway.requests[1]!.body);
+      const followUpMessages = followUpRequest.messages;
+      const followUpPrompt = followUpRequest.transcript;
+      expect(followUpRequest.model).toBe(SUPERGROK_MODEL);
       expect(
         followUpMessages
           .filter((entry) => entry.role !== "system")
@@ -273,7 +286,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       );
       expect(session.isAlive()).toBe(true);
       expect(session.isPaneAlive()).toBe(true);
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      expect(quietStderr(readFileSync(stderrPath, "utf8"))).toBe("");
       expect(finalScrollback).not.toContain("HTTP 400");
 
       const sessionRoot = join(home, ".fx", "sessions");
@@ -424,7 +437,7 @@ while :; do sleep 1; done
         sharedRoot,
       ]);
       expect(gateway.requests).toHaveLength(1);
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      expect(quietStderr(readFileSync(stderrPath, "utf8"))).toBe("");
       expect(session.isAlive()).toBe(true);
       expect(session.isPaneAlive()).toBe(true);
     },

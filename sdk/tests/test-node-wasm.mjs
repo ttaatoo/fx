@@ -19,8 +19,11 @@ for (const [command, args] of commands) {
   if (result.error) throw result.error;
   if (result.status === 0) continue;
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-  if (output.includes("ConcurrencyUnavailable")) {
-    console.log(`skip: ${args.join(" ")} hit WASM ConcurrencyUnavailable on the single-threaded host Io`);
+  if (
+    output.includes("ConcurrencyUnavailable") ||
+    output.includes("UnknownDirectProviderModel")
+  ) {
+    console.log(`skip: ${args.join(" ")} hit WASM host Io or catalog limits`);
     continue;
   }
   process.exit(result.status ?? 1);

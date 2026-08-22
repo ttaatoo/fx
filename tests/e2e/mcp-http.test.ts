@@ -16,16 +16,19 @@ import {
   startModernMcpHttpFixture,
   type ModernHttpMode,
 } from "./fixtures/mcp-modern-http";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import {
   fakeGatewayFinalText,
   fakeGatewayToolCall,
+  requestHasToolCallId,
   startDynamicFakeGateway,
   startFakeGateway,
+  toolResultOutputFromBody,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const MODEL = "openai/gpt-5";
+const MODEL = SUPERGROK_MODEL;
 const TOOL_NAME = "mcp_fixture_echo";
 
 let cleanupRoot: string | null = null;
@@ -115,20 +118,7 @@ function startToolGateway(finalText: string) {
 }
 
 function toolResultText(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) =>
-      part.type === "tool-result" && part.toolCallId === toolCallId
-    );
-  if (!result) throw new Error(`Missing tool result for ${toolCallId}`);
-  const output = result.output as Record<string, unknown>;
-  if (output.type !== "text" || typeof output.value !== "string") {
-    throw new Error(`Invalid tool result for ${toolCallId}`);
-  }
-  return output.value;
+  return toolResultOutputFromBody(body, toolCallId);
 }
 
 function preserveHttpFailure(
@@ -1344,13 +1334,13 @@ describe("modern MCP Streamable HTTP", () => {
         if (body.includes(afterReloadPrompt)) {
           return fakeGatewayFinalText("AFTER_HTTP_RELOAD_ROOT_READY");
         }
-        if (body.includes('"toolCallId":"reload_http_child_call"')) {
+        if (requestHasToolCallId(body, "reload_http_child_call")) {
           return fakeGatewayFinalText("RELOAD_HTTP_CHILD_CANCELLED");
         }
-        if (body.includes('"toolCallId":"reload_http_child_select"')) {
+        if (requestHasToolCallId(body, "reload_http_child_select")) {
           return fakeGatewayToolCall("reload_http_child_call", TOOL_NAME, { text: "stall" });
         }
-        if (body.includes('"toolCallId":"reload_http_child_create"')) {
+        if (requestHasToolCallId(body, "reload_http_child_create")) {
           return fakeGatewayFinalText("RELOAD_HTTP_PARENT_READY");
         }
         if (body.includes(childPrompt)) {
@@ -1406,14 +1396,14 @@ describe("modern MCP Streamable HTTP", () => {
       const childWakeDeadline = Date.now() + 10_000;
       while (
         !gateway.requests.some((request) =>
-          request.body.includes('"toolCallId":"reload_http_child_call"')
+          requestHasToolCallId(request.body, "reload_http_child_call")
         ) &&
         Date.now() < childWakeDeadline
       ) {
         await Bun.sleep(25);
       }
       expect(gateway.requests.some((request) =>
-        request.body.includes('"toolCallId":"reload_http_child_call"')
+        requestHasToolCallId(request.body, "reload_http_child_call")
       )).toBe(true);
       expect(
         fixture.requests.filter((entry) => entry.message.method === "tools/call"),
