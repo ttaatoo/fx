@@ -4,6 +4,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import xtermHeadless from "@xterm/headless";
 import { createFxTerminal, supportsJspi, xtermAdapter } from "../node.js";
+import {
+  ANTHROPIC_MODEL,
+  anthropicSseFromLegacyEvents,
+  wasmAnthropicEnv,
+} from "../tests/supergrok-fixture.mjs";
 
 const { Terminal } = xtermHeadless;
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
@@ -11,7 +16,7 @@ const wasmPath = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/bi
 if (!supportsJspi()) process.exit(2);
 
 const terminal = new Terminal({ cols: 100, rows: 34, allowProposedApi: true, scrollback: 3000 });
-const config = new Map([["model", "test/workspace-model"], ["mode", "code"]]);
+const config = new Map([["model", ANTHROPIC_MODEL], ["mode", "code"]]);
 const encoder = new TextEncoder();
 const requestDecoder = new TextDecoder();
 const stderrDecoder = new TextDecoder();
@@ -64,10 +69,9 @@ const workspace = {
 };
 
 function sse(events) {
-  return new Response(
-    `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
-    { headers: { "content-type": "text/event-stream" } },
-  );
+  return new Response(anthropicSseFromLegacyEvents(events), {
+    headers: { "content-type": "text/event-stream" },
+  });
 }
 
 function toolCall(id, command) {
@@ -78,32 +82,15 @@ function toolCall(id, command) {
 }
 
 function terminalToolCalls(calls) {
-  const events = calls.flatMap(({ id, input }) => {
-    const serialized = JSON.stringify(input);
-    const deltas = [];
-    for (let offset = 0; offset < serialized.length; offset += 4096) {
-      deltas.push({ type: "tool-input-delta", id, delta: serialized.slice(offset, offset + 4096) });
-    }
-    return [
-      { type: "tool-input-start", id, toolName: "terminal" },
-      ...deltas,
-      { type: "tool-input-end", id },
-      { type: "tool-call", toolCallId: id, toolName: "terminal" },
-    ];
-  });
-  const responseEvents = [
-    ...events,
+  return sse([
+    ...calls.map(({ id, input }) => ({
+      type: "tool-call",
+      toolCallId: id,
+      toolName: "terminal",
+      input,
+    })),
     { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
-  ];
-  return new Response(new ReadableStream({
-    start(controller) {
-      for (const event of responseEvents) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      }
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  }), { headers: { "content-type": "text/event-stream" } });
+  ]);
 }
 
 function textResponse(value) {
@@ -113,23 +100,26 @@ function textResponse(value) {
   ]);
 }
 
+function promptMessages(body) {
+  return body.messages ?? body.prompt ?? [];
+}
+
 function toolResult(body, id) {
-  const prompt = body.prompt || [];
-  let lastUser = -1;
-  for (let index = prompt.length - 1; index >= 0; index -= 1) {
-    if (prompt[index].role === "user") {
-      lastUser = index;
-      break;
-    }
+  for (const message of promptMessages(body)) {
+    const content = Array.isArray(message.content) ? message.content : [];
+    const found = content.find((part) =>
+      (part.type === "tool_result" || part.type === "tool-result") &&
+      (part.tool_use_id === id || part.toolCallId === id)
+    );
+    if (found) return found;
   }
-  return prompt.slice(lastUser + 1)
-    .flatMap((message) => Array.isArray(message.content) ? message.content : [])
-    .find((part) => part.type === "tool-result" && part.toolCallId === id);
+  return undefined;
 }
 
 function latestUserText(body) {
-  for (let index = (body.prompt || []).length - 1; index >= 0; index -= 1) {
-    const message = body.prompt[index];
+  const messages = promptMessages(body);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
     if (message.role === "user") return JSON.stringify(message.content);
   }
   return "";
@@ -154,7 +144,7 @@ const fetch = async (_url, init = {}) => {
     if (body.tools?.length !== 1 || body.tools[0]?.name !== "terminal") {
       throw new Error(`workspace advertised unexpected tools: ${JSON.stringify(body.tools)}`);
     }
-    const schema = body.tools[0]?.inputSchema;
+    const schema = body.tools[0]?.input_schema ?? body.tools[0]?.inputSchema;
     if (JSON.stringify(schema?.required) !== JSON.stringify(["action", "command"]) ||
         schema?.properties?.action?.enum?.[0] !== "exec" ||
         schema?.properties?.command?.maxLength !== 65_536 ||
@@ -212,7 +202,7 @@ const runtime = await createFxTerminal({
   backend: "wasm",
   wasm: await readFile(wasmPath),
   terminal: xtermAdapter(terminal),
-  env: { AI_GATEWAY_API_KEY: "workspace-key" },
+  env: wasmAnthropicEnv(),
   fetch,
   configStore: { get(id) { return config.get(id) ?? null; }, set(id, value) { config.set(id, value); } },
   stderr(chunk) { stderr += stderrDecoder.decode(chunk, { stream: true }); },

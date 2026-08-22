@@ -3,6 +3,9 @@ import { strict as assert } from "node:assert";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxAgent } from "../node.js";
+import { SUPERGROK_MODEL, installNativeSupergrok } from "./supergrok-fixture.mjs";
+
+const home = installNativeSupergrok();
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const defaultAddon = resolve(scriptDir, "../../zig-out/lib/libfx.node");
@@ -11,7 +14,9 @@ const events = [];
 const agent = await createFxAgent({
   nativeAddon: addon,
   backend: "native",
-  env: { AI_GATEWAY_API_KEY: "native-core-test-key" },
+  home,
+  workspaceRoot: home,
+  env: { AI_GATEWAY_API_KEY: "native-core-test-key", FX_MODEL: SUPERGROK_MODEL },
   onEvent(event) { events.push(event); },
 });
 const session = await agent.createSession();

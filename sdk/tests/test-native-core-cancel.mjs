@@ -4,12 +4,14 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxAgent } from "../node.js";
+import { SUPERGROK_MODEL, installNativeSupergrok } from "./supergrok-fixture.mjs";
 
 const server = createServer((request) => {
   request.resume();
 });
 await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
 const { port } = server.address();
+const home = installNativeSupergrok({ chatBaseUrl: `http://127.0.0.1:${port}/v1` });
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const addon = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/lib/libfx.node"));
 const timeout = (label, ms = 5000) => new Promise((_, reject) => {
@@ -27,15 +29,16 @@ try {
       fetchStartedResolve();
       return fetch(input, init);
     },
+    home,
+    workspaceRoot: home,
     env: {
       AI_GATEWAY_API_KEY: "native-core-cancel-key",
-      FX_GATEWAY_CHAT_URL: `http://127.0.0.1:${port}/stall`,
-      FX_MODEL: "native/test-model",
+      FX_MODEL: SUPERGROK_MODEL,
     },
   });
   const session = await agent.createSession();
   const turn = session.prompt("stall");
-  await Promise.race([fetchStarted, timeout("stalled gateway fetch")]);
+  await Promise.race([fetchStarted, timeout("stalled chat fetch")]);
   turn.cancel();
   const result = await Promise.race([turn.result, timeout("native cancellation")]);
   assert.equal(result.stopReason, "cancelled");

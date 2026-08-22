@@ -11,16 +11,20 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
+import {
+  SUPERGROK_MODEL,
+  adaptRetiredGatewayTestEnv,
+  ensureTuiSupergrokHome,
+} from "./direct-provider-env";
+import {
+  fakeGatewayFinalText,
+  fakeGatewaySse,
+  startFakeGateway as startSharedFakeGateway,
+} from "./tmux-helpers";
 
 const TIMEOUT = 20_000;
 const FETCH_URL = "https://example.com/docs";
-const OUTER_MODEL = "openai/gpt-5";
-const PROVIDER_MODELS = [
-  "anthropic/claude-sonnet-4.6",
-  "openai/gpt-5",
-  "google/gemini-3-pro",
-  "xai/grok-4",
-] as const;
+const OUTER_MODEL = SUPERGROK_MODEL;
 
 type GatewayRequest = {
   body: string;
@@ -29,16 +33,8 @@ type GatewayRequest = {
 
 type PermissionAction = "allow" | "deny" | null;
 
-function sse(events: object[], done = true) {
-  return new Response(
-    events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") +
-      (done ? "data: [DONE]\n\n" : ""),
-    { headers: { "content-type": "text/event-stream" } },
-  );
-}
-
 function outerToolCalls(calls: Array<{ id: string; name: string; input: object }>) {
-  return sse([
+  return fakeGatewaySse([
     ...calls.map((call) => ({
       type: "tool-call",
       toolCallId: call.id,
@@ -57,51 +53,16 @@ function outerWebFetchCall(input: object = { url: FETCH_URL }) {
 }
 
 function outerText(text: string) {
-  return sse([
-    { type: "text-delta", id: "answer_1", delta: text },
-    {
-      type: "finish",
-      finishReason: { unified: "stop", raw: "stop" },
-      usage: {
-        inputTokens: { total: 11 },
-        outputTokens: { total: 13 },
-      },
-    },
-  ]);
+  return fakeGatewayFinalText(text);
 }
 
 function startFakeGateway(
   responses: Response[] = [outerText("schema advertised")],
   model = OUTER_MODEL,
 ) {
-  const requests: GatewayRequest[] = [];
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/coding-agent/v1/models") {
-        return Response.json({
-          data: PROVIDER_MODELS.map((id) => ({
-            id,
-            type: "language",
-            tags: ["tool-use"],
-          })),
-        });
-      }
-      if (req.method !== "POST") return new Response("not found", { status: 404 });
-      requests.push({ body: await req.text(), headers: req.headers });
-      return responses.shift() ?? new Response("unexpected request", { status: 500 });
-    },
-  });
-
   return {
-    chatUrl: `http://127.0.0.1:${server.port}/v3/ai/language-model`,
-    baseUrl: `http://127.0.0.1:${server.port}`,
+    ...startSharedFakeGateway(responses),
     model,
-    requests,
-    stop() {
-      server.stop(true);
-    },
   };
 }
 
@@ -160,13 +121,22 @@ function parseFxJson(result: Awaited<ReturnType<typeof runFx>>) {
 
 function requestJson(request: GatewayRequest) {
   return JSON.parse(request.body) as {
-    tools: Array<{
-      type: string;
-      name: string;
-      description: string;
-      inputSchema: {
-        type: string;
-        properties: Record<string, { type: string; description?: string }>;
+    model?: string;
+    tools?: Array<{
+      type?: string;
+      name?: string;
+      function?: {
+        name?: string;
+        parameters?: {
+          type?: string;
+          properties?: Record<string, { type?: string; description?: string }>;
+          required?: string[];
+          additionalProperties?: boolean;
+        };
+      };
+      inputSchema?: {
+        type?: string;
+        properties?: Record<string, { type?: string; description?: string }>;
         required?: string[];
         additionalProperties?: boolean;
       };
@@ -175,18 +145,21 @@ function requestJson(request: GatewayRequest) {
 }
 
 function toolSchema(body: ReturnType<typeof requestJson>, name: string) {
-  return body.tools.find((tool) => tool.name === name);
+  for (const tool of body.tools ?? []) {
+    if (tool.function?.name === name) return tool.function.parameters ?? tool.inputSchema;
+    if (tool.name === name) return tool.inputSchema ?? tool.function?.parameters;
+  }
+  return undefined;
 }
 
 function expectWebFetchSchema(request: GatewayRequest) {
   const schema = toolSchema(requestJson(request), "web_fetch");
   expect(schema).toBeDefined();
-  expect(schema?.type).toBe("function");
-  expect(schema?.inputSchema.type).toBe("object");
-  expect(schema?.inputSchema.properties.url.type).toBe("string");
-  expect(schema?.inputSchema.properties.prompt).toBeUndefined();
-  expect(schema?.inputSchema.required).toEqual(["url"]);
-  expect(schema?.inputSchema.additionalProperties).toBe(false);
+  expect(schema?.type).toBe("object");
+  expect(schema?.properties?.url?.type).toBe("string");
+  expect(schema?.properties?.prompt).toBeUndefined();
+  expect(schema?.required).toEqual(["url"]);
+  expect(schema?.additionalProperties).toBe(false);
 }
 
 function expectNoFetchProgress(text: string) {
@@ -219,8 +192,10 @@ class AcpClient {
   }
 
   static create(cwd: string, env: Record<string, string | undefined>) {
+    const adapted = adaptRetiredGatewayTestEnv(env);
+    if (adapted.HOME) ensureTuiSupergrokHome(adapted.HOME, adapted);
     const definedEnv = Object.fromEntries(
-      Object.entries({ ...process.env, NO_COLOR: "1", ...env }).filter(
+      Object.entries({ ...process.env, NO_COLOR: "1", ...adapted }).filter(
         (entry): entry is [string, string] => entry[1] !== undefined,
       ),
     );
@@ -288,32 +263,31 @@ async function runAcpPrompt(client: AcpClient, text: string) {
   }
 }
 
-describe("web_fetch Gateway fixture", () => {
+describe("web_fetch SuperGrok fixture", () => {
   test(
-    "representative providers receive the same strict public web_fetch schema",
+    "SuperGrok advertises the local web_fetch schema without Gateway search tools",
     async () => {
-      for (const model of PROVIDER_MODELS) {
-        const root = createIsolatedRoot();
-        const gateway = startFakeGateway([outerText(`schema ok for ${model}`)], model);
-        try {
-          const result = await runFx(
-            ["ask", "--auto", "--json", "--no-save", "Say schema ok."],
-            {
-              cwd: root.workspace,
-              env: fakeGatewayEnv(root, gateway),
-              timeoutMs: TIMEOUT,
-            },
-          );
+      const root = createIsolatedRoot();
+      const gateway = startFakeGateway([outerText("schema ok")], SUPERGROK_MODEL);
+      try {
+        const result = await runFx(
+          ["ask", "--yolo", "--json", "--no-save", "Say schema ok."],
+          {
+            cwd: root.workspace,
+            env: fakeGatewayEnv(root, gateway),
+            timeoutMs: TIMEOUT,
+          },
+        );
 
-          parseFxJson(result);
-          expect(gateway.requests).toHaveLength(1);
-          expect(gateway.requests[0].headers.get("ai-language-model-id")).toBe(model);
-          expectWebFetchSchema(gateway.requests[0]);
-          expect(gateway.requests[0].body).toContain("gateway.perplexity_search");
-        } finally {
-          gateway.stop();
-          rmSync(root.root, { recursive: true, force: true });
-        }
+        parseFxJson(result);
+        expect(gateway.requests).toHaveLength(1);
+        expect(JSON.parse(gateway.requests[0]!.body).model).toBe(SUPERGROK_MODEL);
+        expectWebFetchSchema(gateway.requests[0]!);
+        expect(gateway.requests[0]!.body).not.toContain("gateway.perplexity_search");
+        expect(gateway.requests[0]!.body).not.toContain("perplexity_search");
+      } finally {
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
       }
     },
     TIMEOUT,
@@ -331,7 +305,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "Issue invalid credentialed web_fetch."],
+          ["ask", "--yolo", "--json", "Issue invalid credentialed web_fetch."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -373,7 +347,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Issue malformed web_fetch."],
+          ["ask", "--yolo", "--json", "--no-save", "Issue malformed web_fetch."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -406,7 +380,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "Issue malformed web_fetch."],
+          ["ask", "--yolo", "Issue malformed web_fetch."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -442,7 +416,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Issue malformed web_fetch and a sibling read."],
+          ["ask", "--yolo", "--json", "--no-save", "Issue malformed web_fetch and a sibling read."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -486,7 +460,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Issue invalid fetch and repeated reads."],
+          ["ask", "--yolo", "--json", "--no-save", "Issue invalid fetch and repeated reads."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),

@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import xtermHeadless from "@xterm/headless";
 import { createFxTerminal, supportsJspi, xtermAdapter } from "../node.js";
+import { wasmAnthropicEnv } from "../tests/supergrok-fixture.mjs";
 
 const { Terminal } = xtermHeadless;
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
@@ -69,7 +70,7 @@ const runtime = await createFxTerminal({
   backend: "wasm",
   wasm: await readFile(wasmPath),
   terminal: instrumentedTerminalHost,
-  env: { AI_GATEWAY_API_KEY: "term-lifecycle-key" },
+  env: wasmAnthropicEnv(),
   fetch,
   onEvent(event) { events.push(event); },
 });
@@ -150,7 +151,7 @@ const abortRuntime = await createFxTerminal({
   backend: "wasm",
   wasm: await readFile(wasmPath),
   terminal: instrumentTerminal(abortTerminal, abortDisposals),
-  env: { AI_GATEWAY_API_KEY: "term-lifecycle-key" },
+  env: wasmAnthropicEnv(),
   fetch,
 });
 const abortFlush = () => new Promise((resolve) => abortTerminal.write("", resolve));
@@ -276,7 +277,7 @@ async function runActiveTransitionChild(scenario, command) {
     backend: "wasm",
     wasm: await readFile(wasmPath),
     terminal: childHost,
-    env: { AI_GATEWAY_API_KEY: "term-active-transition-key" },
+    env: wasmAnthropicEnv(),
     fetch: childFetch,
   });
   const childFlush = () => new Promise((resolveFlush) => childTerminal.write("", resolveFlush));

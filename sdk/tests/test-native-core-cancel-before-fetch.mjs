@@ -3,18 +3,20 @@ import { strict as assert } from "node:assert";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SUPERGROK_MODEL, installNativeSupergrok, nativeCreateCoreOptions } from "./supergrok-fixture.mjs";
+
+const home = installNativeSupergrok();
 
 const require = createRequire(import.meta.url);
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const addonPath = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/lib/libfx.node"));
 const addon = require(addonPath);
-const core = addon.createCore({
+const core = addon.createCore(nativeCreateCoreOptions({
   apiKey: "cancel-before-fetch-key",
-  model: "native/test-model",
-  home: "/tmp",
-  workspaceRoot: "/tmp",
-  gatewayChatUrl: "http://127.0.0.1:31337/chat",
-});
+  model: SUPERGROK_MODEL,
+  home,
+  workspaceRoot: home,
+}));
 
 let nextId = 1;
 let buffered = "";

@@ -16,7 +16,6 @@ import { userInfo } from "node:os";
 import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
 import {
-  classifierEvidenceFromRequest,
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewaySse,
@@ -1847,7 +1846,7 @@ test.skipIf(!tmuxAvailable())(
     ]);
     gateways.push(gateway);
     const active = await launch(fixture, gateway, {
-      FX_PERMISSION_MODE: "auto",
+      FX_PERMISSION_MODE: "yolo",
       FX_TRACE_SCOPES:
         "input,terminal,terminal_client,terminal_store,terminal_host,agent,worker,gateway,permission",
     });
@@ -1879,9 +1878,7 @@ test.skipIf(!tmuxAvailable())(
     expect(listResult).toContain('"lifecycle":"exited"');
     expect(listResult).not.toContain("owner_authority");
     expect(listResult).not.toContain("proof");
-    expect(gateway.classifierRequests).toHaveLength(1);
-    expect(classifierEvidenceFromRequest(gateway.classifierRequests[0]!.body))
-      .toContain('"action":"start"');
+    expect(gateway.classifierRequests).toHaveLength(0);
     expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
   },
   TIMEOUT,

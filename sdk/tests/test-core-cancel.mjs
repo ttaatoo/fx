@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxAgent, supportsJspi } from "../node.js";
+import { wasmAnthropicEnv } from "./supergrok-fixture.mjs";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const defaultWasm = resolve(scriptDir, "../../zig-out/bin/fx-core.wasm");
@@ -39,7 +40,7 @@ const agent = await Promise.race([
   backend: "wasm",
     wasm: await readFile(wasmPath),
     fetch: stalledFetch,
-    env: { AI_GATEWAY_API_KEY: "sdk-test-key" },
+    env: wasmAnthropicEnv(),
   }),
   timeout("fx-core initialize"),
 ]);
@@ -47,7 +48,7 @@ const agent = await Promise.race([
 const session = await agent.createSession();
 const controller = new AbortController();
 const turn = session.prompt("wait forever", { signal: controller.signal });
-await Promise.race([fetchStarted, timeout("stalled gateway fetch")]);
+await Promise.race([fetchStarted, timeout("stalled chat fetch")]);
 controller.abort();
 const result = await Promise.race([turn.result, timeout("cancelled prompt")]);
 if (result.stopReason !== "cancelled") throw new Error(`unexpected stop reason: ${result.stopReason}`);

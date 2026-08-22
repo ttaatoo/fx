@@ -87,7 +87,7 @@ function gatewayEnv(
     FX_DISABLE_KEYCHAIN: "1",
     FX_SKIP_ONBOARDING: "1",
     FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_PERMISSION_MODE: "auto",
+    FX_PERMISSION_MODE: "yolo",
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
     FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
@@ -449,7 +449,7 @@ describe("fx ask presentation", () => {
       const session = await TmuxSession.create({
         cmd: terminalCommand([
           "ask",
-          "--auto",
+          "--yolo",
           "--no-save",
           "Inspect fixture.txt and render the response.",
         ]),
@@ -500,7 +500,7 @@ describe("fx ask presentation", () => {
       const session = await TmuxSession.create({
         cmd: terminalCommand([
           "ask",
-          "--auto",
+          "--yolo",
           "--no-save",
           "List saved memories.",
         ]),
@@ -841,7 +841,7 @@ describe("fx ask presentation", () => {
       const session = await TmuxSession.create({
         cmd: terminalCommand([
           "ask",
-          "--auto",
+          "--yolo",
           "--no-save",
           "Run the notice filtering fixture.",
         ]),

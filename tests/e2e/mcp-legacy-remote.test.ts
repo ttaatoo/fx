@@ -108,7 +108,7 @@ function fixtureEnv(
     AI_GATEWAY_API_KEY: "fake-mcp-legacy-key",
     VERCEL_OIDC_TOKEN: undefined,
     FX_AUTO_UPGRADE: "0",
-    FX_PERMISSION_MODE: "auto",
+    FX_PERMISSION_MODE: "yolo",
     FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
     FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: activeGateway.chatUrl,
@@ -135,7 +135,7 @@ async function runAsk(
   extraEnv: Record<string, string> = {},
 ) {
   return runFx(
-    ["ask", "--json", "--auto", "--no-save", prompt],
+    ["ask", "--json", "--yolo", "--no-save", prompt],
     {
       cwd: root.workspace,
       env: {
@@ -639,7 +639,7 @@ describe("version-scoped legacy MCP remote transports", () => {
             cwd: root.workspace,
             width: 110,
             height: 34,
-            cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the legacy HTTP URL-required fixture.")}`,
+            cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the legacy HTTP URL-required fixture.")}`,
             remainOnExit: true,
             env: {
               ...fixtureEnv(root, gateway),

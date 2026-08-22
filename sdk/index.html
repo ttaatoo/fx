@@ -47,7 +47,7 @@
   <section id="controls" aria-label="Session controls">
     <label>Model<input id="model" class="model" list="models" disabled><datalist id="models"></datalist></label>
     <label>Mode<select id="mode" disabled></select></label>
-    <label>Transport<select id="transport" disabled><option value="live">Live gateway</option><option value="mock">Mock stream</option><option value="stall">Stalled stream</option></select></label>
+    <label>Transport<select id="transport" disabled><option value="live">Live provider</option><option value="mock">Mock stream</option><option value="stall">Stalled stream</option></select></label>
   </section>
   <main id="timeline" aria-live="polite"></main>
   <form>
@@ -150,13 +150,8 @@
       if (transport === "live") return globalThis.fetch(url, init);
       return mockFetch(url, init);
     }
-    async function mockFetch(url, init) {
-      if (init.method === "GET" && String(url).endsWith("/v1/models")) {
-        return Response.json({ object: "list", data: [
-          { id: "sdk/catalog-alpha", type: "language", released: 2, tags: ["tool-use"] },
-          { id: "sdk/catalog-beta", type: "language", released: 1, tags: ["reasoning"] },
-        ] });
-      }
+    async function mockFetch(_url, init) {
+      if (init.method === "GET") throw new Error(`unexpected catalog fetch ${String(_url)}`);
       test.fetchCalls++;
       if (transport === "stall") {
         let controller;
@@ -169,11 +164,15 @@
       }
       return new Response(new ReadableStream({
         async start(controller) {
-          controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":"hello"}\n'));
+          controller.enqueue(encoded.encode(`data: ${JSON.stringify({ type: "message_start", message: { id: "msg_sdk", type: "message", role: "assistant", content: [], model: "claude-opus-4-6" } })}\n\n`));
+          controller.enqueue(encoded.encode(`data: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`));
+          controller.enqueue(encoded.encode(`data: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } })}\n\n`));
           await sleep(chunkDelay);
-          controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":" world"}\n'));
-          controller.enqueue(encoded.encode('data: {"type":"finish","finishReason":{"unified":"stop"},"usage":{"inputTokens":{"total":3},"outputTokens":{"total":2}}}\n'));
-          controller.enqueue(encoded.encode("data: [DONE]\n"));
+          controller.enqueue(encoded.encode(`data: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " world" } })}\n\n`));
+          controller.enqueue(encoded.encode(`data: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`));
+          controller.enqueue(encoded.encode(`data: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } })}\n\n`));
+          controller.enqueue(encoded.encode(`data: ${JSON.stringify({ type: "message_stop" })}\n\n`));
+          controller.enqueue(encoded.encode("data: [DONE]\n\n"));
           controller.close();
         },
       }), { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -285,7 +284,10 @@
           wasm: location.hostname === "localhost" || location.hostname === "127.0.0.1"
             ? "../zig-out/bin/fx-core.wasm"
             : "./fx-core.wasm",
-          env: { AI_GATEWAY_API_KEY: localStorage.getItem("FX_API_KEY") || "sdk-test-key" },
+          env: {
+            ANTHROPIC_API_KEY: localStorage.getItem("FX_API_KEY") || "sdk-test-key",
+            FX_MODEL: initialModel || "claude-opus-4-6",
+          },
           fetch: dispatchFetch,
           onEvent: observe,
           onPermission: resolvePermission,

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxAgent, supportsJspi } from "../node.js";
+import { anthropicSseResponse, parseChatRequest, wasmAnthropicEnv } from "./supergrok-fixture.mjs";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const defaultWasm = resolve(scriptDir, "../../zig-out/bin/fx-core.wasm");
@@ -13,31 +14,16 @@ if (!supportsJspi()) {
   process.exit(2);
 }
 
-const encoded = new TextEncoder();
-const catalogModels = [
-  { id: "sdk/catalog-alpha", type: "language", released: 2, tags: ["tool-use"] },
-];
 let fetchCalls = 0;
 let workspaceExecs = 0;
-const mockFetch = async (url, init) => {
-  if (init.method === "GET" && String(url).endsWith("/v1/models")) {
-    return Response.json({ object: "list", data: catalogModels });
-  }
+const mockFetch = async (_url, init) => {
   fetchCalls++;
   if (init.method !== "POST") throw new Error(`unexpected method ${init.method}`);
-  const requestBody = JSON.parse(new TextDecoder().decode(init.body));
-  if (!Array.isArray(requestBody.prompt) && !Array.isArray(requestBody.messages)) {
-    throw new Error("gateway request did not contain prompt messages");
+  const request = parseChatRequest(init);
+  if (!Array.isArray(request.messages)) {
+    throw new Error("chat request did not contain messages");
   }
-  return new Response(new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":"hello"}\n'));
-      controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":" world"}\n'));
-      controller.enqueue(encoded.encode('data: {"type":"finish","finishReason":{"unified":"stop"},"usage":{"inputTokens":{"total":3},"outputTokens":{"total":2}}}\n'));
-      controller.enqueue(encoded.encode("data: [DONE]\n"));
-      controller.close();
-    },
-  }), { status: 200, headers: { "content-type": "text/event-stream" } });
+  return anthropicSseResponse(["hello", " world"]);
 };
 
 const timeout = (label, ms = 8000) => {
@@ -54,10 +40,7 @@ const agent = await Promise.race([
     backend: "wasm",
     wasm: await readFile(wasmPath),
     fetch: mockFetch,
-    env: {
-      AI_GATEWAY_API_KEY: "sdk-test-key",
-      HOME: "/repo",
-    },
+    env: wasmAnthropicEnv({ HOME: "/repo" }),
     workspace: {
       info: {
         version: 1,
@@ -95,7 +78,7 @@ if (notices.some((notice) => notice.includes("home unavailable"))) {
 }
 if (streamedText !== "hello world") throw new Error(`unexpected streamed text: ${JSON.stringify(chunks)}`);
 if (result.stopReason !== "end_turn") throw new Error(`unexpected stop reason: ${result.stopReason}`);
-if (fetchCalls !== 1) throw new Error(`expected one gateway fetch, got ${fetchCalls}`);
+if (fetchCalls !== 1) throw new Error(`expected one chat fetch, got ${fetchCalls}`);
 if (workspaceExecs !== 0) throw new Error(`workspace.exec ran ${workspaceExecs} time(s)`);
 
 await agent.close();

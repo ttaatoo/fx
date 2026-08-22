@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxAgent } from "../node.js";
+import { SUPERGROK_MODEL, installNativeSupergrok, openaiSseChunks } from "./supergrok-fixture.mjs";
 
 const events = [];
 let requestCount = 0;
@@ -30,19 +31,18 @@ const server = createServer((request, response) => {
         events.push("first-connection-close");
         firstConnectionClosedResolve();
       });
-      response.write('data: {"type":"text-delta","delta":"native one"}\n\n');
-      response.write('data: {"type":"finish","finishReason":{"unified":"stop","raw":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":2}}}\n\n');
+      response.write(openaiSseChunks(["native one"], { done: false }));
       events.push("first-finish-sent");
       return;
     }
-    assert.equal(requestCount, 2, "only two Gateway requests are expected");
-    response.write('data: {"type":"text-delta","delta":"native two"}\n\n');
-    response.write('data: {"type":"finish","finishReason":{"unified":"stop","raw":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":2}}}\n\n');
-    response.end("data: [DONE]\n\n");
+    assert.equal(requestCount, 2, "only two chat requests are expected");
+    response.write(openaiSseChunks(["native two"]));
+    response.end();
   });
 });
 await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
 const { port } = server.address();
+const home = installNativeSupergrok({ chatBaseUrl: `http://127.0.0.1:${port}/v1` });
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const addon = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/lib/libfx.node"));
@@ -70,10 +70,11 @@ try {
       }
       return fetch(input, init);
     },
+    home,
+    workspaceRoot: home,
     env: {
       AI_GATEWAY_API_KEY: "native-core-stream-key",
-      FX_GATEWAY_CHAT_URL: `http://127.0.0.1:${port}/chat`,
-      FX_MODEL: "native/test-model",
+      FX_MODEL: SUPERGROK_MODEL,
     },
   });
   const session = await agent.createSession();

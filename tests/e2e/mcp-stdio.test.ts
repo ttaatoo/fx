@@ -220,7 +220,7 @@ function fixtureEnv(root: FixtureRoot, activeGateway: ReturnType<typeof startFak
     AI_GATEWAY_API_KEY: "fake-mcp-stdio-key",
     VERCEL_OIDC_TOKEN: undefined,
     FX_AUTO_UPGRADE: "0",
-    FX_PERMISSION_MODE: "auto",
+    FX_PERMISSION_MODE: "yolo",
     FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
     FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: activeGateway.chatUrl,
@@ -374,7 +374,7 @@ describe("modern MCP stdio compatibility", () => {
     });
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Confirm the workspace is available."],
+        ["ask", "--json", "--yolo", "--no-save", "Confirm the workspace is available."],
         {
           cwd: workspace,
           env: {
@@ -411,7 +411,7 @@ describe("modern MCP stdio compatibility", () => {
     });
     gateway = initialGateway;
     const initial = await runFx(
-      ["ask", "--json", "--auto", "Use the fresh profile MCP."],
+      ["ask", "--json", "--yolo", "Use the fresh profile MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, initialGateway),
@@ -440,7 +440,7 @@ describe("modern MCP stdio compatibility", () => {
     });
     gateway = resumedGateway;
     const resumed = await runFx(
-      ["ask", "--json", "--auto", "--resume", sessionId, "Use the current profile MCP."],
+      ["ask", "--json", "--yolo", "--resume", sessionId, "Use the current profile MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, resumedGateway),
@@ -540,7 +540,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", parentPrompt],
+      ["ask", "--json", "--yolo", parentPrompt],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -609,7 +609,7 @@ describe("modern MCP stdio compatibility", () => {
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--yolo", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -707,7 +707,7 @@ describe("modern MCP stdio compatibility", () => {
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--yolo", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -816,7 +816,7 @@ describe("modern MCP stdio compatibility", () => {
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--yolo", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -887,7 +887,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Try the MCP features requiring input."],
+      ["ask", "--json", "--yolo", "--no-save", "Try the MCP features requiring input."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -968,7 +968,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the configured MCP resource and prompt features."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the configured MCP resource and prompt features."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1029,7 +1029,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Exercise MCP feature errors."],
+      ["ask", "--json", "--yolo", "--no-save", "Exercise MCP feature errors."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1071,7 +1071,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Read the stalled MCP resource."],
+      ["ask", "--json", "--yolo", "--no-save", "Read the stalled MCP resource."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1122,7 +1122,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the live stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the live stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1180,7 +1180,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the changed legacy stdio tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the changed legacy stdio tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1217,7 +1217,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = startToolGateway("Latest legacy stdio negotiation complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1250,7 +1250,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = startToolGateway("Invalid params fallback complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1289,7 +1289,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the failing MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the failing MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1316,7 +1316,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = startToolGateway("Ordered legacy stdio negotiation complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1344,7 +1344,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = startToolGateway("Legacy stdio version ladder complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the oldest legacy stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the oldest legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1394,7 +1394,7 @@ describe("modern MCP stdio compatibility", () => {
 
       const started = Date.now();
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Exercise the malformed MCP fixture."],
+        ["ask", "--json", "--yolo", "--no-save", "Exercise the malformed MCP fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway),
@@ -1791,7 +1791,7 @@ describe("modern MCP stdio compatibility", () => {
       const activeGateway = startToolGateway(`${fixture.label} MCP complete.`);
       gateway = activeGateway;
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", `Call the ${fixture.label} MCP fixture.`],
+        ["ask", "--json", "--yolo", "--no-save", `Call the ${fixture.label} MCP fixture.`],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -1842,7 +1842,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Answer without using MCP."],
+      ["ask", "--json", "--yolo", "--no-save", "Answer without using MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1864,7 +1864,7 @@ describe("modern MCP stdio compatibility", () => {
     const activeGateway = startToolGateway("Legacy Draft 7 complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy Draft 7 MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the legacy Draft 7 MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1902,7 +1902,7 @@ describe("modern MCP stdio compatibility", () => {
     });
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Try invalid legacy Draft 7 arguments."],
+      ["ask", "--json", "--yolo", "--no-save", "Try invalid legacy Draft 7 arguments."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1926,7 +1926,7 @@ describe("modern MCP stdio compatibility", () => {
     const activeGateway = startToolGateway("Legacy progress complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the legacy MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1951,7 +1951,7 @@ describe("modern MCP stdio compatibility", () => {
     const activeGateway = startToolGateway("MRTR Ask boundary complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the MRTR MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the MRTR MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2233,7 +2233,7 @@ describe("modern MCP stdio compatibility", () => {
           isolated: true,
           ...(surface === "Ask"
             ? {
-                cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the unsafe MCP elicitation fixture.")}`,
+                cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the unsafe MCP elicitation fixture.")}`,
                 remainOnExit: true,
               }
             : { stderrPath }),
@@ -2310,7 +2310,7 @@ describe("modern MCP stdio compatibility", () => {
           isolated: true,
           ...(surface === "Ask"
             ? {
-                cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the colliding MCP form fixture.")}`,
+                cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the colliding MCP form fixture.")}`,
                 remainOnExit: true,
               }
             : { stderrPath }),
@@ -2568,7 +2568,7 @@ describe("modern MCP stdio compatibility", () => {
     const activeGateway = startToolGateway("Legacy URL-required version gate complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy URL-required fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the legacy URL-required fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2597,7 +2597,7 @@ describe("modern MCP stdio compatibility", () => {
       const prompt = "Call the MRTR MCP fixture interactively.";
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify(prompt)}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify(prompt)}`,
         cwd: root.workspace,
         width: 120,
         height: 34,
@@ -2651,7 +2651,7 @@ describe("modern MCP stdio compatibility", () => {
         const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the direct legacy elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the direct legacy elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -2723,7 +2723,7 @@ describe("modern MCP stdio compatibility", () => {
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the legacy URL-required fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the legacy URL-required fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -2785,7 +2785,7 @@ describe("modern MCP stdio compatibility", () => {
       const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the multiple legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the multiple legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 120,
         height: 36,
@@ -2854,7 +2854,7 @@ describe("modern MCP stdio compatibility", () => {
       const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the malformed completion fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the malformed completion fixture.")}`,
         cwd: root.workspace,
         width: 120,
         height: 36,
@@ -2910,7 +2910,7 @@ describe("modern MCP stdio compatibility", () => {
       writeFakeUrlOpeners(fakeBin, "#!/bin/sh\nexit 0\n");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call and cancel the legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call and cancel the legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 110,
         height: 34,
@@ -2952,7 +2952,7 @@ describe("modern MCP stdio compatibility", () => {
       writeFakeUrlOpeners(fakeBin, "#!/bin/sh\nexit 0\n");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call and wait for the legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call and wait for the legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 110,
         height: 34,
@@ -3027,7 +3027,7 @@ describe("modern MCP stdio compatibility", () => {
         const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify(`Use the legacy ${operation} URL-required fixture.`)}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify(`Use the legacy ${operation} URL-required fixture.`)}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -3077,7 +3077,7 @@ describe("modern MCP stdio compatibility", () => {
       const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Complete the full MCP form.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Complete the full MCP form.")}`,
         cwd: root.workspace,
         width: 120,
         height: 38,
@@ -3211,7 +3211,7 @@ describe("modern MCP stdio compatibility", () => {
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the URL elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the URL elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -3292,7 +3292,7 @@ describe("modern MCP stdio compatibility", () => {
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Decline the URL elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Decline the URL elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 34,
@@ -3335,7 +3335,7 @@ describe("modern MCP stdio compatibility", () => {
     const progressGateway = startToolGateway("Progress MCP complete.");
     gateway = progressGateway;
     const progressResult = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the progress MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the progress MCP fixture."],
       {
         cwd: progressRoot.workspace,
         env: fixtureEnv(progressRoot, progressGateway),
@@ -3365,7 +3365,7 @@ describe("modern MCP stdio compatibility", () => {
     const timeoutGateway = startToolGateway("Timed out MCP recovered.");
     gateway = timeoutGateway;
     const timeoutResult = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the stalled MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the stalled MCP fixture."],
       {
         cwd: timeoutRoot.workspace,
         env: fixtureEnv(timeoutRoot, timeoutGateway),
@@ -3401,7 +3401,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the stalled MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the stalled MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -3488,7 +3488,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "This request must remain blocked."],
+      ["ask", "--json", "--yolo", "--no-save", "This request must remain blocked."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -4360,7 +4360,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Recover the MCP fixture once."],
+      ["ask", "--json", "--yolo", "--no-save", "Recover the MCP fixture once."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -4479,7 +4479,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Exhaust the MCP restart budget."],
+      ["ask", "--json", "--yolo", "--no-save", "Exhaust the MCP restart budget."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),

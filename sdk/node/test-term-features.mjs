@@ -4,6 +4,12 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import xtermHeadless from "@xterm/headless";
 import { createFxTerminal, supportsJspi, xtermAdapter } from "../node.js";
+import {
+  ANTHROPIC_FAST_MODEL,
+  ANTHROPIC_MODEL,
+  anthropicSseResponse,
+  wasmAnthropicEnv,
+} from "../tests/supergrok-fixture.mjs";
 
 const { Terminal } = xtermHeadless;
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
@@ -11,7 +17,7 @@ const wasmPath = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/bi
 if (!supportsJspi()) process.exit(2);
 
 const terminal = new Terminal({ cols: 100, rows: 34, allowProposedApi: true, scrollback: 2000 });
-const config = new Map([["model", "test/feature-model"], ["mode", "ask"]]);
+const config = new Map([["model", ANTHROPIC_MODEL], ["mode", "ask"]]);
 const requests = [];
 const catalog = {
   object: "list",
@@ -30,14 +36,7 @@ const fetch = async (url, init = {}) => {
   requests.push(body);
   turn += 1;
   const response = turn === 1 ? "first answer" : "second answer";
-  return new Response(new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoder.encode(`data: {"type":"text-delta","delta":"${response}"}\n`));
-      controller.enqueue(encoder.encode('data: {"type":"finish","finishReason":{"unified":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":2}}}\n'));
-      controller.enqueue(encoder.encode("data: [DONE]\n"));
-      controller.close();
-    },
-  }), { status: 200, headers: { "content-type": "text/event-stream" } });
+  return anthropicSseResponse([response]);
 };
 const stderrDecoder = new TextDecoder();
 let stderrText = "";
@@ -45,11 +44,10 @@ const runtime = await createFxTerminal({
   backend: "wasm",
   wasm: await readFile(wasmPath),
   terminal: xtermAdapter(terminal),
-  env: {
-    AI_GATEWAY_API_KEY: "feature-key",
+  env: wasmAnthropicEnv({
     FX_TRACE_STDERR: "1",
     FX_TRACE_SCOPES: "full_transcript,full_transcript_cache,frame_schedule",
-  },
+  }),
   fetch,
   configStore: { get(id) { return config.get(id) ?? null; }, set(id, value) { config.set(id, value); } },
   stderr(chunk) { stderrText += stderrDecoder.decode(chunk, { stream: true }); },
@@ -79,7 +77,7 @@ async function command(text, expected) {
 await waitFor(() => grid().includes("𝒇x"), "startup");
 await command("first question", "first answer");
 await command("second question", "second answer");
-if (requests.length !== 2) throw new Error(`expected two gateway turns, got ${requests.length}`);
+if (requests.length !== 2) throw new Error(`expected two chat turns, got ${requests.length}`);
 const secondBody = JSON.stringify(requests[1]);
 for (const expected of ["first question", "first answer", "second question"]) {
   if (!secondBody.includes(expected)) throw new Error(`second turn omitted ${expected}: ${secondBody}`);
@@ -92,13 +90,13 @@ await waitFor(() => grid().includes("Full detail"), "full transcript detail");
 runtime.write("\x0f");
 await waitFor(() => terminal.buffer.active.type === "normal", "full transcript close");
 
-await command("/login", "Vercel sign-in failed. The current credential is unchanged.");
+await command("/login", "SuperGrok sign-in failed. The current credential is unchanged.");
 await command("/resume", "Session resume is owned by the embedding SDK");
 await command("/mcp list", "No MCP servers configured");
 await command("/skills list", "Skills are unavailable in this host");
 
 runtime.write("/models\r");
-await waitFor(() => grid().includes("feature-model") && grid().includes("other-model"), "model catalog menu");
+await waitFor(() => grid().includes(ANTHROPIC_MODEL) && grid().includes(ANTHROPIC_FAST_MODEL), "model catalog menu");
 runtime.write("\x1b");
 await waitFor(() => terminal.buffer.active.type === "normal", "model catalog close");
 

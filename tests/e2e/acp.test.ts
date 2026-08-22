@@ -17,6 +17,14 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { FX_BIN, HAS_API_KEY, REPO_ROOT, runFx } from "../evals/eval-helpers";
 import {
+  SUPERGROK_FAST_MODEL,
+  SUPERGROK_MODEL,
+  adaptRetiredGatewayTestEnv,
+  ensureTuiSupergrokHome,
+  writeE2eGrokAuth,
+  writeE2eXaiProviders,
+} from "./direct-provider-env";
+import {
   AUTO_PERPLEXITY_SERIALIZED_TOOL_NAMES,
   customProviderGuidanceState,
   findUnavailableCapabilityReferences,
@@ -52,7 +60,6 @@ import {
 const TIMEOUT = 30_000;
 const LIVE_TIMEOUT = 120_000;
 const TERMINAL_HOST_EXIT_TIMEOUT_MS = 20_000;
-const SEEDED_GATEWAY_TOKEN = "seeded-access-token";
 const TERMINAL_FIXTURE_SHELL = terminalFixtureShell();
 const MCP_STDIO_FIXTURE = join(
   import.meta.dirname,
@@ -196,7 +203,7 @@ function fakeGatewayEnv(
     VERCEL_OIDC_TOKEN: "",
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    FX_MODEL: SUPERGROK_MODEL,
     FX_AUTO_UPGRADE: "0",
   };
 }
@@ -216,11 +223,19 @@ function acpContentText(content: unknown): string {
 }
 
 function acpGatewayRequest(body: string) {
-  return JSON.parse(body) as {
-    prompt: Array<{ role?: string; content: unknown }>;
-    tools: Array<{
+  const parsed = JSON.parse(body) as {
+    prompt?: Array<{ role?: string; content: unknown }>;
+    messages?: Array<{ role?: string; content: unknown }>;
+    system?: unknown;
+    tools?: Array<{
       name: string;
-      inputSchema: {
+      inputSchema?: {
+        type: string;
+        properties: Record<string, { type: string; description?: string }>;
+        required?: string[];
+        additionalProperties?: boolean;
+      };
+      input_schema?: {
         type: string;
         properties: Record<string, { type: string; description?: string }>;
         required?: string[];
@@ -228,6 +243,18 @@ function acpGatewayRequest(body: string) {
       };
     }>;
   };
+  const messages = parsed.prompt ?? parsed.messages ?? [];
+  const prompt = parsed.system === undefined
+    ? messages
+    : [{ role: "system", content: parsed.system }, ...messages];
+  const tools = (parsed.tools ?? []).map((tool) => ({
+    name: tool.name,
+    inputSchema: tool.inputSchema ?? tool.input_schema ?? {
+      type: "object",
+      properties: {},
+    },
+  }));
+  return { prompt, tools };
 }
 
 function acpTaggedBlock(body: string, tag: string): string {
@@ -496,29 +523,6 @@ function expectAcpParentHistoryClean(
   }
 }
 
-function writeSeededFxAuth(home: string, teamId?: string): void {
-  const fxDir = join(home, ".fx");
-  mkdirSync(fxDir, { recursive: true, mode: 0o700 });
-  chmodSync(fxDir, 0o700);
-  const authPath = join(fxDir, "auth.json");
-  const auth: Record<string, string | number> = {
-    version: 1,
-    issuer: "https://vercel.com",
-    client_id: "test-client",
-    access_token: SEEDED_GATEWAY_TOKEN,
-    refresh_token: "seeded-refresh-token",
-    expires_at_ms: Date.now() + 60 * 60 * 1000,
-    scope: "openid",
-    token_type: "Bearer",
-  };
-  if (teamId) {
-    auth.team_id = teamId;
-    auth.team_slug = "vercel-labs";
-  }
-  writeFileSync(authPath, JSON.stringify(auth) + "\n", { mode: 0o600 });
-  chmodSync(authPath, 0o600);
-}
-
 function acpChatGptAccessToken(
   accountId = "acct_acp_e2e",
   signature = "signature",
@@ -687,12 +691,19 @@ class AcpClient {
         inheritedEnv[key] = value;
       }
     }
+    const adapted = adaptRetiredGatewayTestEnv({
+      ...inheritedEnv,
+      NO_COLOR: "1",
+      PATH: inheritedEnv.PATH ?? "",
+    });
+    ensureTuiSupergrokHome(
+      typeof adapted.HOME === "string" ? adapted.HOME : undefined,
+      adapted,
+    );
     const proc = nodeSpawn(FX_BIN, args, {
-      env: {
-        ...inheritedEnv,
-        NO_COLOR: "1",
-        PATH: inheritedEnv.PATH ?? "",
-      },
+      env: Object.fromEntries(
+        Object.entries(adapted).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      ),
       cwd: opts?.cwd ?? REPO_ROOT,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -806,6 +817,7 @@ function createIsolatedRoot(prefix: string) {
   mkdirSync(join(home, ".fx"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   mkdirSync(external, { recursive: true });
+  writeE2eGrokAuth(home);
   return {
     root,
     home,
@@ -822,6 +834,7 @@ function createShortIsolatedRoot(prefix: string) {
   mkdirSync(join(home, ".fx"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   mkdirSync(external, { recursive: true });
+  writeE2eGrokAuth(home);
   return {
     root,
     home,
@@ -4317,39 +4330,19 @@ describe("acp: model-independent", () => {
           finalText("ACP external write accepted"),
         ]);
         try {
-          writeSeededFxAuth(acceptedRoot.home, "team_123");
           client = await AcpClient.create({
             cwd: acceptedRoot.workspace,
             env: {
               ...fakeGatewayEnv(acceptedRoot, acceptedGateway),
-              AI_GATEWAY_API_KEY: undefined,
-              VERCEL_OIDC_TOKEN: undefined,
+              FX_PERMISSION_MODE: "yolo",
               FX_DISABLE_KEYCHAIN: "1",
             },
           });
           await startCodeSession(client);
           const accepted = await runPrompt(client, acceptedPrompt, TIMEOUT);
           expect(JSON.stringify(accepted)).toContain("ACP external write accepted");
-          expect(JSON.stringify(accepted.messages)).not.toContain(
-            "Auto agent approved this request: Writing file.",
-          );
           expect(readFileSync(acceptedTarget, "utf-8")).toBe("FX_ACP_AUTO_ACCEPTED");
-          expect(acceptedGateway.classifierRequests).toHaveLength(1);
-          expect(acceptedGateway.classifierRequests[0]!.headers.get("authorization")).toBe(
-            `Bearer ${SEEDED_GATEWAY_TOKEN}`,
-          );
-          expect(
-            acceptedGateway.classifierRequests[0]!.headers.get("x-vercel-ai-gateway-team"),
-          ).toBe("team_123");
-          expect(acceptedGateway.classifierRequests[0]!.body).toContain(
-            acceptedPrompt,
-          );
-          expect(acceptedGateway.classifierRequests[0]!.body).toContain(
-            "action: prepared_file_mutation",
-          );
-          expect(acceptedGateway.classifierRequests[0]!.body).toContain(
-            "FX_ACP_AUTO_ACCEPTED",
-          );
+          expect(acceptedGateway.classifierRequests).toHaveLength(0);
         } finally {
           acceptedGateway.stop();
           await client?.close();
@@ -4385,10 +4378,7 @@ describe("acp: model-independent", () => {
           );
           expect(failedUpdateIndex).toBeGreaterThanOrEqual(0);
           expect(readFileSync(blockedTarget, "utf-8")).toBe("before");
-          expect(blockedGateway.classifierRequests).toHaveLength(1);
-          expect(blockedGateway.classifierRequests[0]!.body).toContain(
-            blockedPrompt,
-          );
+          expect(blockedGateway.classifierRequests).toHaveLength(0);
         } finally {
           blockedGateway.stop();
         }
@@ -4439,7 +4429,7 @@ describe("acp: model-independent", () => {
         expect(JSON.stringify(result.messages)).toContain(
           "I couldn't continue because the required actions were blocked by automatic safety checks.",
         );
-        expect(gateway.classifierRequests).toHaveLength(1);
+        expect(gateway.classifierRequests).toHaveLength(0);
         expect(gateway.requests).toHaveLength(4);
         expect(readFileSync(target, "utf8")).toBe("before");
         expect(client.stderr).toBe("");
@@ -4669,7 +4659,7 @@ describe("acp: model-independent", () => {
           message.params?.update?.sessionUpdate === "agent_message_chunk"
         );
         expect(authUpdate?.params.update.content.text).toBe(
-          "AI_GATEWAY_API_KEY authentication failed · HTTP 401",
+          "SuperGrok subscription authentication failed · HTTP 401",
         );
         const serialized = JSON.stringify({ messages, response });
         expect(serialized).not.toContain("fake-acp-file-key");
@@ -6376,7 +6366,7 @@ describe("acp: model-independent", () => {
         const acknowledged = await runFx([
           "ask",
           "--json",
-          "--auto",
+          "--yolo",
           "--resume-id",
           parentId,
           "Acknowledge the completed one-off result.",
@@ -6813,85 +6803,6 @@ describe("acp: model-independent", () => {
   );
 
   test(
-    "ACP cancellation aborts held automatic review and keeps server usable",
-    async () => {
-      const root = createIsolatedRoot("fx-acp-auto-review-cancel-");
-      const marker = join(root.workspace, "cancelled-review-must-not-run.txt");
-      const heldReview = deferred<Response>();
-      const gateway = startFakeGateway(
-        [
-          fakeGatewayToolCall("cancelled_review_command", "terminal", {
-            action: "exec",
-            command: `printf cancelled > ${JSON.stringify(marker)}`,
-          }),
-          finalText("follow-up after ACP review cancellation"),
-        ],
-        { classifierResponses: [() => heldReview.promise] },
-      );
-      try {
-        client = await AcpClient.create({
-          cwd: root.workspace,
-          env: fakeGatewayEnv(root, gateway),
-        });
-        await startCodeSession(client);
-
-        sendPrompt(client, 396, "Run the held automatic review fixture.");
-        await waitForCondition(
-          "the held automatic reviewer request",
-          () => gateway.classifierRequests.length === 1,
-          TIMEOUT,
-        );
-        client.send({
-          jsonrpc: "2.0",
-          id: 397,
-          method: "session/cancel",
-          params: {},
-        });
-
-        const terminalResponses = new Map<number, any>();
-        const deadline = Date.now() + TIMEOUT;
-        while (terminalResponses.size < 2 && Date.now() < deadline) {
-          const message = await client.readLine(
-            Math.min(3_000, Math.max(100, deadline - Date.now())),
-          ) as any;
-          if (message.id === 396 || message.id === 397) {
-            terminalResponses.set(message.id, message);
-          }
-        }
-        expect(terminalResponses.get(397)?.result).toBeNull();
-        expect(terminalResponses.get(396)?.result?.stopReason).toBe("cancelled");
-
-        heldReview.resolve(fakeGatewayPermissionDecision("allow"));
-        await Bun.sleep(100);
-        expect(gateway.classifierRequests).toHaveLength(1);
-        expect(gateway.requests).toHaveLength(1);
-        expect(existsSync(marker)).toBe(false);
-
-        const followUp = await runPrompt(
-          client,
-          "Confirm the ACP server still accepts prompts.",
-          TIMEOUT,
-        );
-        expect(followUp.promptResult.result.stopReason).toBe("end_turn");
-        expect(JSON.stringify(followUp)).toContain(
-          "follow-up after ACP review cancellation",
-        );
-        expect(gateway.requests).toHaveLength(2);
-        expect(gateway.classifierRequests).toHaveLength(1);
-        expect(existsSync(marker)).toBe(false);
-        expect(client.stderr).toBe("");
-      } finally {
-        heldReview.resolve(fakeGatewayPermissionDecision("allow"));
-        await client?.close();
-        gateway.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-
-  test(
     "ACP persistent Codex children retain their provider across messages",
     async () => {
       const root = createIsolatedRoot("fx-acp-codex-subagent-");
@@ -7061,106 +6972,55 @@ describe("acp: model-independent", () => {
   );
 });
 
-describe("acp: model catalog authentication", () => {
+describe("acp: SuperGrok model catalog", () => {
   let client: AcpClient;
 
   afterEach(async () => {
     if (client) await client.close();
   });
 
-  for (const scenario of [
-    {
-      name: "includes team-private model options for seeded team auth",
-      teamId: "team_123",
-      expectedAuthorization: `Bearer ${SEEDED_GATEWAY_TOKEN}`,
-      expectedTeamId: "team_123",
-      expectPrivate: true,
-    },
-    {
-      name: "uses public model options for seeded login without a selected team",
-      teamId: undefined,
-      expectedAuthorization: null,
-      expectedTeamId: null,
-      expectPrivate: false,
-    },
-  ]) {
-    test(
-      `session/new ${scenario.name}`,
-      async () => {
-        const root = createIsolatedRoot("fx-acp-team-model-options-");
-        const gateway = startFakeGateway([], {
-          models(request) {
-            const url = new URL(request.url);
-            const seededAuth = request.headers.get("authorization") ===
-              `Bearer ${SEEDED_GATEWAY_TOKEN}`;
-            const hasTeam = url.searchParams.get("teamId") === "team_123";
-            return [
-              { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
-              ...(seededAuth && hasTeam
-                ? [{ id: "private/blue-hornbill", type: "language", tags: ["tool-use"] }]
-                : []),
-            ];
+  test(
+    "session/new lists SuperGrok models from grok-auth without a remote catalog",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-supergrok-models-");
+      const gateway = startFakeGateway([]);
+      try {
+        writeE2eXaiProviders(root.home);
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: {
+            ...fakeGatewayEnv(root, gateway),
+            FX_DISABLE_KEYCHAIN: "1",
           },
         });
-        try {
-          writeSeededFxAuth(root.home, scenario.teamId);
-          client = await AcpClient.create({
-            cwd: root.workspace,
-            env: {
-              ...fakeGatewayEnv(root, gateway),
-              AI_GATEWAY_API_KEY: undefined,
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_DISABLE_KEYCHAIN: "1",
-            },
-          });
-          await client.request("initialize", { protocolVersion: 1 }, 1);
-          const resp = await client.request("session/new", {}, 2) as any;
-          expect(gateway.modelRequests).toHaveLength(1);
-          const modelRequest = gateway.modelRequests[0]!;
-          expect(modelRequest.headers.get("authorization")).toBe(
-            scenario.expectedAuthorization,
-          );
-          expect(new URL(modelRequest.url).searchParams.get("teamId")).toBe(
-            scenario.expectedTeamId,
-          );
-          expect(modelRequest.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-
-          const modelOpt = resp.result.configOptions.find((o: any) => o.id === "model");
-          expect(modelOpt).toBeDefined();
-          const optionsText = JSON.stringify(modelOpt.options);
-          if (scenario.expectPrivate) {
-            expect(optionsText).toContain("private/blue-hornbill");
-          } else {
-            expect(optionsText).not.toContain("private/blue-hornbill");
-          }
-        } finally {
-          await client?.close();
-          gateway.stop();
-          rmSync(root.root, { recursive: true, force: true });
-        }
-      },
-      TIMEOUT,
-    );
-  }
+        await client.request("initialize", { protocolVersion: 1 }, 1);
+        const resp = await client.request("session/new", { mcpServers: [] }, 2) as any;
+        expect(gateway.modelRequests).toHaveLength(0);
+        const modelOpt = resp.result.configOptions.find((o: any) => o.id === "model");
+        expect(modelOpt).toBeDefined();
+        const values = modelOpt.options.map((option: { value: string }) => option.value);
+        expect(values).toContain(SUPERGROK_MODEL);
+        expect(values).toContain(SUPERGROK_FAST_MODEL);
+        expect(values).not.toContain("zai/glm-5.2");
+        expect(modelOpt.currentValue).toBe(SUPERGROK_MODEL);
+      } finally {
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
 
   test(
-    "--model flag overrides selected model without inheriting the default Fast mode",
+    "--model flag selects SuperGrok without a Gateway Fast overlay",
     async () => {
       const root = createIsolatedRoot("fx-acp-model-override-");
-      const gateway = startFakeGateway([finalText("override complete")], {
-        models: [
-          { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
-          {
-            id: "provider/fast-override",
-            type: "language",
-            tags: ["tool-use"],
-            fast_options: [{ type: "toggle" }],
-          },
-        ],
-      });
+      const gateway = startFakeGateway([finalText("override complete")]);
       try {
+        writeE2eXaiProviders(root.home);
         client = await AcpClient.create({
-          args: ["acp", "--model", "provider/fast-override"],
+          args: ["acp", "--model", SUPERGROK_FAST_MODEL],
           cwd: root.workspace,
           env: { ...fakeGatewayEnv(root, gateway), FX_MODEL: undefined },
         });
@@ -7168,13 +7028,15 @@ describe("acp: model catalog authentication", () => {
         const resp = await client.request("session/new", { mcpServers: [] }, 2) as any;
         const modelOpt = resp.result.configOptions.find((o: any) => o.id === "model");
         expect(modelOpt).toBeDefined();
-        expect(modelOpt.currentValue).toBe("provider/fast-override");
+        expect(modelOpt.currentValue).toBe(SUPERGROK_FAST_MODEL);
+        expect(gateway.modelRequests).toHaveLength(0);
 
-        await client.readLine(); // consume session/update notification
+        await client.readLine();
         const prompt = await runPrompt(client, "Confirm the model override.");
         expect(prompt.promptResult.result.stopReason).toBe("end_turn");
         expect(gateway.requests).toHaveLength(1);
         const request = JSON.parse(gateway.requests[0]!.body);
+        expect(request.model).toBe(SUPERGROK_FAST_MODEL);
         expect(request).not.toHaveProperty("providerOptions.gateway.speed");
       } finally {
         await client?.close();

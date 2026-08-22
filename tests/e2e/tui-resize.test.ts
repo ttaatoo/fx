@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
+import { SUPERGROK_MODEL, writeE2eXaiProviders } from "./direct-provider-env";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -118,6 +119,7 @@ async function launchRecordedSurfaceSession(
   const stderrPath = join(root, "stderr.log");
   mkdirSync(join(home, ".fx"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
+  writeE2eXaiProviders(home);
   writeFileSync(join(workspace, "AGENTS.md"), "# Test workspace\n");
   writeFileSync(stderrPath, "");
   tempDirs.push(root);
@@ -2674,12 +2676,11 @@ describe.skipIf(SKIP)("tui: resize", () => {
       label: "model",
       width: 120,
       height: 36,
-      surfaceMarker: "provider/model-a",
+      surfaceMarker: SUPERGROK_MODEL,
       editedInput: "/model x",
-      fakeModels: true,
       async openSurface(active) {
         await active.sendText("/model");
-        await active.waitForText("provider/model-a", TIMEOUT);
+        await active.waitForText(SUPERGROK_MODEL, TIMEOUT);
         await active.resizeWindow(60, 12, 500);
       },
     },
@@ -2715,27 +2716,10 @@ describe.skipIf(SKIP)("tui: resize", () => {
     test(
       `${surfaceCase.issue} ${surfaceCase.label} release does not wait for the next edit to reflow`,
       async () => {
-        const gateway = surfaceCase.fakeModels
-          ? startFakeGateway([], {
-              models: [{
-                id: "provider/model-a",
-                type: "language",
-                released: 1,
-                tags: ["tool-use"],
-              }],
-            })
-          : null;
-        if (gateway) gateways.push(gateway);
         const fixture = await launchRecordedSurfaceSession(
           surfaceCase.label.replaceAll(" ", "-"),
           surfaceCase.width,
           surfaceCase.height,
-          gateway
-            ? {
-                FX_E2E_GATEWAY_MODELS_URL:
-                  `${gateway.baseUrl}/coding-agent/v1/models`,
-              }
-            : {},
         );
         session = fixture.active;
         await surfaceCase.openSurface(session);

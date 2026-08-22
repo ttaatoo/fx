@@ -438,7 +438,7 @@ describe("session recovery", () => {
       };
       try {
         const resumedA = await runFx(
-          ["ask", "--json", "--auto", "--resume", "last", "continue A"],
+          ["ask", "--json", "--yolo", "--resume", "last", "continue A"],
           {
             cwd: workspaceARoot,
             env: resumeEnv,
@@ -447,7 +447,7 @@ describe("session recovery", () => {
         expect(resumedA.code).toBe(0);
         expect(JSON.parse(resumedA.stdout).session_id).toBe(healthyAId);
         const resumedB = await runFx(
-          ["ask", "--json", "--auto", "--resume", "last", "continue B"],
+          ["ask", "--json", "--yolo", "--resume", "last", "continue B"],
           {
             cwd: workspaceBRoot,
             env: resumeEnv,

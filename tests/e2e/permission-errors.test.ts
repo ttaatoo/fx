@@ -283,7 +283,7 @@ describe("generic permission typed errors", () => {
         const scrollback = await session.captureFullScrollback();
         expect(scrollback).not.toContain("Approve? [y/N]");
         for (const marker of markers) expect(existsSync(marker)).toBe(false);
-        expect(gateway.classifierRequests).toHaveLength(4);
+        expect(gateway.classifierRequests).toHaveLength(0);
 
         const stdout = readFileSync(stdoutPath, "utf8");
         expect(stdout).not.toContain("Approve? [y/N]");
@@ -294,7 +294,7 @@ describe("generic permission typed errors", () => {
         expect(json.tool_calls.filter((call) => call.status === "error")).toHaveLength(4);
         expect(json.tool_calls.filter((call) => call.status === "success")).toHaveLength(0);
         expect(gateway.requests).toHaveLength(4);
-        expect(gateway.classifierRequests).toHaveLength(4);
+        expect(gateway.classifierRequests).toHaveLength(0);
       } finally {
         if (session) await session.kill();
         gateway.stop();

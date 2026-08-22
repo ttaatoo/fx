@@ -17,8 +17,8 @@ export const FX_BIN = resolve(import.meta.dirname, "../../zig-out/bin/fx");
 export const REPO_ROOT = resolve(import.meta.dirname, "../..");
 
 export const EVAL_MODELS = [
-  "anthropic/claude-sonnet-4.6",
-  "xai/grok-4.20-multi-agent-beta",
+  "claude-sonnet-4-6",
+  "grok-4.6",
 ] as const;
 
 export const EVAL_MODEL: string = process.env.EVAL_MODEL ?? EVAL_MODELS[0];

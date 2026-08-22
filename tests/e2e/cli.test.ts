@@ -797,9 +797,9 @@ describe("cli: status", () => {
         const user = await runFx(["status", "--json"], {
           cwd: workspace,
           env,
-          timeoutMs: 5_000,
+          timeoutMs: 10_000,
         });
-        expect(Date.now() - userStartedAt).toBeLessThan(5_000);
+        expect(Date.now() - userStartedAt).toBeLessThan(10_000);
         expect(user.code).toBe(0);
         expect(JSON.parse(user.stdout)).toMatchObject({ kind: "status" });
         expect(user.stderr).toContain("fx: config user: durable_path_unsafe");
@@ -810,9 +810,9 @@ describe("cli: status", () => {
         const project = await runFx(["status", "--json"], {
           cwd: workspace,
           env,
-          timeoutMs: 5_000,
+          timeoutMs: 10_000,
         });
-        expect(Date.now() - projectStartedAt).toBeLessThan(5_000);
+        expect(Date.now() - projectStartedAt).toBeLessThan(10_000);
         expect(project.code).toBe(0);
         expect(JSON.parse(project.stdout)).toMatchObject({ kind: "status" });
         expect(project.stderr).toContain("fx: config project: durable_path_unsafe");

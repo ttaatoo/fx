@@ -1,5 +1,4 @@
 [
-  { "file": "auto-mode-reliability.test.ts", "weight": 4 },
   { "file": "acp.test.ts", "weight": 29 },
   { "file": "ask-presentation.test.ts", "weight": 5 },
   { "file": "ci-shards.test.ts", "weight": 15 },
@@ -21,7 +20,6 @@
   { "file": "tui-agent.test.ts", "weight": 1 },
   { "file": "tui-command-permissions.test.ts", "weight": 153 },
   { "file": "tui-composer-edit-contracts.test.ts", "weight": 168 },
-  { "file": "tui-cost.test.ts", "weight": 16 },
   { "file": "tui-decision-prompts.test.ts", "weight": 174 },
   { "file": "tui-direct-write-audit.test.ts", "weight": 2 },
   { "file": "tui-file-picker.test.ts", "weight": 100 },

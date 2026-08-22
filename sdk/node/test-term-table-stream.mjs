@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import xtermHeadless from "@xterm/headless";
 import { createFxTerminal, supportsJspi, xtermAdapter } from "../node.js";
+import { ANTHROPIC_MODEL, anthropicSseFromLegacyEvents, wasmAnthropicEnv } from "../tests/supergrok-fixture.mjs";
 
 const { Terminal } = xtermHeadless;
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
@@ -19,25 +20,25 @@ const markdown = [
   "| mint | shade | needs water |",
 ].join("\n") + "\n";
 
-const fetch = async () => new Response(new ReadableStream({
-  start(controller) {
-    for (let offset = 0; offset < markdown.length; offset += 4) {
-      const delta = markdown.slice(offset, offset + 4);
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-delta", delta })}\n\n`));
-    }
-    controller.enqueue(encoder.encode('data: {"type":"finish","finishReason":{"unified":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":2}}}\n\n'));
-    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-    controller.close();
-  },
-}), { status: 200, headers: { "content-type": "text/event-stream" } });
+const fetch = async () => {
+  const events = [];
+  for (let offset = 0; offset < markdown.length; offset += 4) {
+    events.push({ type: "text-delta", delta: markdown.slice(offset, offset + 4) });
+  }
+  events.push({ type: "finish", finishReason: { unified: "stop" }, usage: { outputTokens: { total: 2 } } });
+  return new Response(anthropicSseFromLegacyEvents(events), {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+};
 
 const runtime = await createFxTerminal({
   backend: "wasm",
   wasm: await readFile(wasmPath),
   terminal: xtermAdapter(terminal),
-  env: { AI_GATEWAY_API_KEY: "table-stream-key" },
+  env: wasmAnthropicEnv(),
   fetch,
-  configStore: { get(id) { return id === "model" ? "test/table-model" : null; }, set() {} },
+  configStore: { get(id) { return id === "model" ? ANTHROPIC_MODEL : null; }, set() {} },
 });
 
 const flush = () => new Promise((resolveFlush) => terminal.write("", resolveFlush));

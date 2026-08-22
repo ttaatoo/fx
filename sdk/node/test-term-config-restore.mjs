@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import xtermHeadless from "@xterm/headless";
 import { createFxTerminal, supportsJspi, xtermAdapter } from "../node.js";
+import { wasmAnthropicEnv } from "../tests/supergrok-fixture.mjs";
 
 const { Terminal } = xtermHeadless;
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
@@ -30,11 +31,10 @@ async function verifyStartup(label, configStore, expectedEvent, trigger, expecte
   backend: "wasm",
     wasm,
     terminal: xtermAdapter(terminal),
-    env: {
-      AI_GATEWAY_API_KEY: "config-restore-test-key",
+    env: wasmAnthropicEnv({
       FX_TRACE_STDERR: "1",
       FX_TRACE_SCOPES: "host_config",
-    },
+    }),
     configStore,
     stderr(chunk) { stderrText += stderrDecoder.decode(chunk, { stream: true }); },
     fetch: async () => new Response('{"object":"list","data":[]}', {

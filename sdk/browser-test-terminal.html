@@ -46,15 +46,26 @@
     const fetchStarted = new Promise((resolve) => { signalFetchStarted = resolve; });
     const bufferedStreamReleased = new Promise((resolve) => { releaseBufferedStream = resolve; });
     const bufferedStreamFinished = new Promise((resolve) => { finishBufferedStream = resolve; });
+    const anthropicOpen = () => encoded.encode(`${[
+      `data: ${JSON.stringify({ type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", content: [], model: "claude-opus-4-6" } })}`,
+      `data: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}`,
+    ].join("\n\n")}\n\n`);
+    const anthropicDelta = (text) => encoded.encode(`data: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } })}\n\n`);
+    const anthropicClose = () => encoded.encode(`${[
+      `data: ${JSON.stringify({ type: "content_block_stop", index: 0 })}`,
+      `data: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } })}`,
+      `data: ${JSON.stringify({ type: "message_stop" })}`,
+      "data: [DONE]",
+    ].join("\n\n")}\n\n`);
     const completedResponse = (text) => {
       let sent = false;
       return new Response(new ReadableStream({
         pull(controller) {
           if (sent) return;
           sent = true;
-          controller.enqueue(encoded.encode(`data: ${JSON.stringify({ type: "text-delta", id: "browser_followup_1", delta: text })}\n\n`));
-          controller.enqueue(encoded.encode('data: {"type":"finish","finishReason":{"unified":"stop","raw":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":1}}}\n\n'));
-          controller.enqueue(encoded.encode("data: [DONE]\n\n"));
+          controller.enqueue(anthropicOpen());
+          controller.enqueue(anthropicDelta(text));
+          controller.enqueue(anthropicClose());
           controller.close();
         },
       }), { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -83,17 +94,17 @@
           streamChunkCount += 1;
           testState.chunks = streamChunkCount;
           if (streamChunkCount === 1) {
-            controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":"STREAM_STARTED"}\n'));
+            controller.enqueue(anthropicOpen());
+            controller.enqueue(anthropicDelta("STREAM_STARTED"));
             return;
           }
           if (streamChunkCount <= 128) {
-            controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":"."}\n'));
+            controller.enqueue(anthropicDelta("."));
             return;
           }
           await bufferedStreamFinished;
-          controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":"STREAM_FINISHED"}\n'));
-          controller.enqueue(encoded.encode('data: {"type":"finish","finishReason":{"unified":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":2}}}\n'));
-          controller.enqueue(encoded.encode("data: [DONE]\n"));
+          controller.enqueue(anthropicDelta("STREAM_FINISHED"));
+          controller.enqueue(anthropicClose());
           controller.close();
           streamSourceClosed = true;
         },
@@ -103,7 +114,7 @@
     runtime = await createFxTerminal({
       wasm: "../zig-out/bin/fx-term.wasm",
       terminal,
-      env: { AI_GATEWAY_API_KEY: "browser-terminal-test-key" },
+      env: { ANTHROPIC_API_KEY: "browser-terminal-test-key", FX_MODEL: "claude-opus-4-6" },
       fetch: mockFetch,
     });
     testState.stage = "waiting-interactive";

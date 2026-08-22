@@ -10,10 +10,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY } from "../evals/eval-helpers";
+import { FX_BIN } from "../evals/eval-helpers";
 import { hasEmptyComposer, TmuxSession, tmuxAvailable } from "./tmux-helpers";
 
-const SKIP = !tmuxAvailable() || !HAS_API_KEY;
+const SKIP = !tmuxAvailable();
 const SKIP_TMUX = !tmuxAvailable();
 const TIMEOUT = 30_000;
 

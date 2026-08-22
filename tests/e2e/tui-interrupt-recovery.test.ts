@@ -12,9 +12,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SUPERGROK_FAST_MODEL, SUPERGROK_MODEL } from "./direct-provider-env";
 import { readTrace } from "./tui-render-assertions";
 import {
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewayToolCall,
   startFakeGateway,
@@ -32,7 +32,7 @@ const PARTIAL_CHUNKS = [
 ];
 const VISIBLE_PARTIAL_CHUNKS = PARTIAL_CHUNKS.slice(0, 2);
 const FOLLOW_UP_RESPONSE = "INTERRUPT_FOLLOW_UP_COMPLETE";
-const FOLLOW_UP_MODEL = "google/gemini-3.1-flash-lite";
+const FOLLOW_UP_MODEL = SUPERGROK_FAST_MODEL;
 
 type GatewayHandle = ReturnType<typeof startFakeGateway>;
 type HoldState = {
@@ -97,7 +97,8 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
+          FX_MODEL: SUPERGROK_MODEL,
+          FX_PERMISSION_MODE: "yolo",
           FX_TRACE_SCOPES: TRACE_SCOPES,
           FX_TRACE_LOG: tracePath,
         },
@@ -167,7 +168,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       const settingsPath = join(home, ".fx", "settings.json");
       writeFileSync(
         settingsPath,
-        JSON.stringify({ model: FAKE_GATEWAY_MODEL }) + "\n",
+        JSON.stringify({ model: SUPERGROK_MODEL }) + "\n",
       );
 
       const held: HoldState = {
@@ -181,7 +182,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
         () => providerPortableResponse(FOLLOW_UP_RESPONSE),
       ], {
         models: [
-          { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
+          { id: SUPERGROK_MODEL, type: "language", tags: ["tool-use"] },
           { id: FOLLOW_UP_MODEL, type: "language", tags: ["tool-use"] },
         ],
       });
@@ -199,6 +200,8 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
           FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
+          FX_MODEL: SUPERGROK_MODEL,
+          FX_PERMISSION_MODE: "yolo",
           FX_TRACE_SCOPES: TRACE_SCOPES,
           FX_TRACE_LOG: tracePath,
         },
@@ -240,18 +243,16 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       expect(held.cancelCount).toBe(1);
       expect(countOccurrences(readTrace(tracePath), "event=interrupt_persisted")).toBe(1);
       const followUpRequest = JSON.parse(gateway.requests[1]!.body) as {
-        prompt: Array<{ role: string }>;
+        model?: string;
+        messages?: Array<{ role: string }>;
+        prompt?: Array<{ role: string }>;
         tools: unknown[];
       };
-      const followUpPrompt = JSON.stringify(followUpRequest.prompt);
-      expect(gateway.requests[0]!.headers.get("ai-language-model-id")).toBe(
-        FAKE_GATEWAY_MODEL,
-      );
-      expect(gateway.requests[1]!.headers.get("ai-language-model-id")).toBe(
-        FOLLOW_UP_MODEL,
-      );
+      const followUpMessages = followUpRequest.messages ?? followUpRequest.prompt ?? [];
+      const followUpPrompt = JSON.stringify(followUpMessages);
+      expect(followUpRequest.model).toBe(FOLLOW_UP_MODEL);
       expect(
-        followUpRequest.prompt
+        followUpMessages
           .filter((entry) => entry.role !== "system")
           .map((entry) => entry.role),
       ).toEqual([
@@ -320,7 +321,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
         join(home, ".fx", "settings.json"),
         JSON.stringify({
           sandbox: "none",
-          permission_mode: "auto",
+          permission_mode: "yolo",
           permission: {},
           workspaces: {
             [workspaceRoot]: { additional_directories: [observedRoot] },
@@ -358,7 +359,8 @@ while :; do sleep 1; done
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
+          FX_MODEL: SUPERGROK_MODEL,
+          FX_PERMISSION_MODE: "yolo",
           FX_TRACE_SCOPES: `${TRACE_SCOPES},core`,
           FX_TRACE_LOG: tracePath,
         },
@@ -430,6 +432,18 @@ while :; do sleep 1; done
   );
 });
 
+function openaiTextChunk(content: string, finishReason: string | null = null): string {
+  return `data: ${JSON.stringify({
+    id: "chatcmpl_e2e",
+    object: "chat.completion.chunk",
+    choices: [{
+      index: 0,
+      delta: finishReason ? {} : { content },
+      finish_reason: finishReason,
+    }],
+  })}\n\n`;
+}
+
 function heldPartialResponse(state: HoldState): Response {
   const encoder = new TextEncoder();
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -439,9 +453,7 @@ function heldPartialResponse(state: HoldState): Response {
       start(controller) {
         state.started = true;
         for (const delta of PARTIAL_CHUNKS) {
-          controller.enqueue(encoder.encode(
-            `data: ${JSON.stringify({ type: "text-delta", id: "partial", delta })}\n\n`,
-          ));
+          controller.enqueue(encoder.encode(openaiTextChunk(delta)));
         }
         timer = setInterval(() => {
           if (!closed) controller.enqueue(encoder.encode(": hold-interrupted-turn\n\n"));
@@ -461,9 +473,13 @@ function heldPartialResponse(state: HoldState): Response {
 function providerPortableResponse(text: string): Response {
   const request = gateway?.requests.at(-1);
   if (!request) return new Response("missing captured request", { status: 500 });
-  const payload = JSON.parse(request.body) as { prompt: Array<{ role: string }> };
+  const payload = JSON.parse(request.body) as {
+    messages?: Array<{ role: string }>;
+    prompt?: Array<{ role: string }>;
+  };
+  const messages = payload.messages ?? payload.prompt ?? [];
   let sawNonSystem = false;
-  for (const entry of payload.prompt) {
+  for (const entry of messages) {
     if (entry.role === "system") {
       if (sawNonSystem) {
         return new Response("system role must remain in the leading prefix", {
@@ -485,9 +501,7 @@ function heldUntilReleasedResponse(state: HoldState): Response {
     new ReadableStream<Uint8Array>({
       start(controller) {
         state.started = true;
-        controller.enqueue(encoder.encode(
-          'data: {"type":"text-delta","id":"held","delta":"ACTIVE_RESPONSE_HELD\\n"}\n\n',
-        ));
+        controller.enqueue(encoder.encode(openaiTextChunk("ACTIVE_RESPONSE_HELD\n")));
         timer = setInterval(() => {
           if (!closed) controller.enqueue(encoder.encode(": held-response\n\n"));
         }, 50);
@@ -496,10 +510,7 @@ function heldUntilReleasedResponse(state: HoldState): Response {
           closed = true;
           state.released = true;
           if (timer) clearInterval(timer);
-          controller.enqueue(encoder.encode(
-            'data: {"type":"finish","finishReason":{"unified":"stop","raw":"stop"}}\n\n' +
-              "data: [DONE]\n\n",
-          ));
+          controller.enqueue(encoder.encode(`${openaiTextChunk("", "stop")}data: [DONE]\n\n`));
           controller.close();
         };
       },

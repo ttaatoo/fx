@@ -45,7 +45,7 @@ describe.skipIf(!HAS_API_KEY)("live web_search private backends", () => {
           const result = await runFx(
             [
               "ask",
-              "--auto",
+              "--yolo",
               "--json",
               "--no-save",
               "--timeout",

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxAgent } from "../node.js";
+import { SUPERGROK_MODEL, installNativeSupergrok, openaiSseChunks, writeGrokAuth } from "./supergrok-fixture.mjs";
 
 const marker = "LIBFX_EXPLICIT_WORKSPACE_CONTEXT";
 const originalCwd = process.cwd();
@@ -22,13 +23,13 @@ const server = createServer((request, response) => {
   request.on("data", (chunk) => { requestBody += chunk; });
   request.on("end", () => {
     response.writeHead(200, { "content-type": "text/event-stream" });
-    response.write('data: {"type":"text-delta","delta":"isolated"}\n\n');
-    response.write('data: {"type":"finish","finishReason":{"unified":"stop","raw":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":1}}}\n\n');
-    response.end("data: [DONE]\n\n");
+    response.end(openaiSseChunks(["isolated"]));
   });
 });
 await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
 const { port } = server.address();
+writeGrokAuth(runtimeHome);
+installNativeSupergrok({ home: runtimeHome, chatBaseUrl: `http://127.0.0.1:${port}/v1` });
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const addon = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/lib/libfx.node"));
 
@@ -41,8 +42,7 @@ try {
     workspaceRoot: runtimeWorkspace,
     env: {
       AI_GATEWAY_API_KEY: "native-core-config-key",
-      FX_GATEWAY_CHAT_URL: `http://127.0.0.1:${port}/chat`,
-      FX_MODEL: "native/test-model",
+      FX_MODEL: SUPERGROK_MODEL,
     },
   });
   const session = await agent.createSession();

@@ -15,7 +15,7 @@ Requirements:
 - Node.js 20 or later
 - Chrome or Edge 137 or later for browser WebAssembly
 - JSPI when using the WebAssembly backend
-- A Vercel AI Gateway credential or a host-provided authenticated `fetch`
+- SuperGrok (`~/.fx/grok-auth.json`) for the native backend, or `ANTHROPIC_API_KEY` for WebAssembly hosts that cannot read the SuperGrok session file
 
 The package includes:
 
@@ -51,7 +51,8 @@ import { createFxAgent } from "libfx";
 
 const agent = await createFxAgent({
   env: {
-    AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    FX_MODEL: "claude-opus-4-6",
   },
   onEvent(event) {
     console.log(event.type);
@@ -148,7 +149,8 @@ if (!supportsJspi()) {
 
 const agent = await createFxAgent({
   env: {
-    AI_GATEWAY_API_KEY: "<short-lived credential>",
+    ANTHROPIC_API_KEY: "<short-lived credential>",
+    FX_MODEL: "claude-opus-4-6",
   },
 });
 
@@ -204,7 +206,8 @@ fit.fit();
 const runtime = await createFxTerminal({
   terminal: xtermAdapter(terminal),
   env: {
-    AI_GATEWAY_API_KEY: "<short-lived credential>",
+    ANTHROPIC_API_KEY: "<short-lived credential>",
+    FX_MODEL: "claude-opus-4-6",
   },
 });
 
@@ -276,7 +279,7 @@ Hosts may provide adapters for runtime state and external effects:
 
 | Option | Purpose |
 | --- | --- |
-| `fetch` | Routes Gateway requests through the host |
+| `fetch` | Routes provider chat requests through the host |
 | `env` | Supplies runtime configuration without changing process globals |
 | `onEvent` | Receives runtime, ACP, terminal, and lifecycle events |
 | `onPermission` | Resolves agent permission requests |
@@ -289,12 +292,12 @@ Hosts may provide adapters for runtime state and external effects:
 
 ## Security boundaries
 
-`nativeAddon` and `env.FX_GATEWAY_CHAT_URL` are trusted host configuration. Do
-not populate them from request, tenant, or other untrusted input.
+`nativeAddon` is trusted host configuration. Do not populate it from request,
+tenant, or other untrusted input.
 
-The native backend sends production credentials only to the canonical Vercel
-AI Gateway endpoint. Custom Gateway endpoints are limited to explicit loopback
-HTTP URLs for local development.
+Native SuperGrok chat uses the SuperGrok session file under `HOME`. WebAssembly
+hosts have no filesystem, so they use `ANTHROPIC_API_KEY` and the Anthropic
+catalog (`claude-opus-4-6`, `claude-sonnet-4-6`).
 
 The WebAssembly runtime intentionally does not provide:
 

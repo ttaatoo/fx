@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import xtermHeadless from "@xterm/headless";
 import { createFxTerminal, supportsJspi, xtermAdapter } from "../node.js";
+import { anthropicSseResponse, wasmAnthropicEnv } from "../tests/supergrok-fixture.mjs";
 
 const { Terminal } = xtermHeadless;
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
@@ -21,15 +22,7 @@ const promptHistoryStore = {
   },
   clear(workspaceRoot) { histories.delete(workspaceRoot); },
 };
-const encoded = new TextEncoder();
-const fetch = async () => new Response(new ReadableStream({
-  start(controller) {
-    controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":"ok"}\n'));
-    controller.enqueue(encoded.encode('data: {"type":"finish","finishReason":{"unified":"stop"}}\n'));
-    controller.enqueue(encoded.encode("data: [DONE]\n"));
-    controller.close();
-  },
-}), { status: 200, headers: { "content-type": "text/event-stream" } });
+const fetch = async () => anthropicSseResponse(["ok"]);
 
 function grid(terminal) {
   const lines = [];
@@ -59,7 +52,7 @@ async function start() {
   backend: "wasm",
     wasm,
     terminal: xtermAdapter(terminal),
-    env: { AI_GATEWAY_API_KEY: "term-history-key" },
+    env: wasmAnthropicEnv(),
     fetch,
     promptHistoryStore,
     onEvent(event) { events.push(event); },

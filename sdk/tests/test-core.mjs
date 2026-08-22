@@ -3,6 +3,13 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxAgent, supportsJspi } from "../node.js";
+import {
+  ANTHROPIC_FAST_MODEL,
+  ANTHROPIC_MODEL,
+  anthropicSseResponse,
+  parseChatRequest,
+  wasmAnthropicEnv,
+} from "./supergrok-fixture.mjs";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const defaultWasm = resolve(scriptDir, "../../zig-out/bin/fx-core.wasm");
@@ -16,48 +23,27 @@ if (!supportsJspi()) {
 const trace = process.env.FX_WASM_TRACE === "1";
 const checkpoint = (message) => { if (trace) console.error(`[core-smoke] ${message}`); };
 
-const encoded = new TextEncoder();
-const catalogModels = [
-  { id: "sdk/catalog-alpha", type: "language", released: 2, tags: ["tool-use"] },
-  { id: "sdk/catalog-beta", type: "language", released: 1, tags: ["reasoning"] },
-];
+const catalogModels = [ANTHROPIC_MODEL, ANTHROPIC_FAST_MODEL];
 let fetchCalls = 0;
 let requestedModel;
-let requestedSessionId;
-let requestedSessionAffinity;
 const persistedConfig = new Map([
-  ["model", "sdk/catalog-alpha"],
+  ["model", ANTHROPIC_MODEL],
   ["mode", "code"],
 ]);
 const configStore = {
   get(configId) { return persistedConfig.get(configId) ?? null; },
   set(configId, value) { persistedConfig.set(configId, value); },
 };
-const mockFetch = async (url, init) => {
+const mockFetch = async (_url, init) => {
   checkpoint("fetch opened");
-  if (init.method === "GET" && String(url).endsWith("/v1/models")) {
-    return Response.json({ object: "list", data: catalogModels });
-  }
   fetchCalls++;
   if (init.method !== "POST") throw new Error(`unexpected method ${init.method}`);
-  const requestBody = JSON.parse(new TextDecoder().decode(init.body));
-  const headers = new Headers(init.headers);
-  requestedModel = headers.get("ai-language-model-id");
-  requestedSessionId = headers.get("x-session-id");
-  requestedSessionAffinity = headers.get("x-session-affinity");
-  if (!Array.isArray(requestBody.prompt) && !Array.isArray(requestBody.messages)) {
-    throw new Error("gateway request did not contain prompt messages");
+  const request = parseChatRequest(init);
+  requestedModel = request.model;
+  if (!Array.isArray(request.messages)) {
+    throw new Error("chat request did not contain messages");
   }
-  return new Response(new ReadableStream({
-    async start(controller) {
-      controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":"hello"}\n'));
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      controller.enqueue(encoded.encode('data: {"type":"text-delta","delta":" world"}\n'));
-      controller.enqueue(encoded.encode('data: {"type":"finish","finishReason":{"unified":"stop"},"usage":{"inputTokens":{"total":3},"outputTokens":{"total":2}}}\n'));
-      controller.enqueue(encoded.encode("data: [DONE]\n"));
-      controller.close();
-    },
-  }), { status: 200, headers: { "content-type": "text/event-stream" } });
+  return anthropicSseResponse(["hello", " world"]);
 };
 
 checkpoint("creating agent");
@@ -99,7 +85,7 @@ const sessionStore = {
 const events = [];
 let initializeTimeout;
 const agent = await Promise.race([
-  createFxAgent({ backend: "wasm", wasm: await readFile(wasmPath), fetch: mockFetch, env: { AI_GATEWAY_API_KEY: "sdk-test-key" }, configStore, sessionStore, onEvent(event) { events.push(event); }, traceWasi: trace }),
+  createFxAgent({ backend: "wasm", wasm: await readFile(wasmPath), fetch: mockFetch, env: wasmAnthropicEnv(), configStore, sessionStore, onEvent(event) { events.push(event); }, traceWasi: trace }),
   new Promise((_, reject) => {
     initializeTimeout = setTimeout(() => reject(new Error("timed out waiting for fx-core initialize")), 5000);
   }),
@@ -117,19 +103,19 @@ if (modeOption?.options.find((option) => option.value === "ask")?.permissionMode
 const modelOption = session.configOptions?.find((option) => option.id === "model");
 if (!modelOption) throw new Error("session/new did not return model options");
 for (const model of catalogModels) {
-  if (!modelOption.options.some((option) => option.value === model.id)) throw new Error(`model catalog omitted ${model.id}`);
+  if (!modelOption.options.some((option) => option.value === model)) throw new Error(`model catalog omitted ${model}`);
 }
-if (modelOption.currentValue !== "sdk/catalog-alpha") throw new Error(`stored model was not restored through ACP: ${modelOption.currentValue}`);
+if (modelOption.currentValue !== ANTHROPIC_MODEL) throw new Error(`stored model was not restored through ACP: ${modelOption.currentValue}`);
 if (session.modes.currentModeId !== "code") throw new Error(`stored mode was not restored through ACP: ${session.modes.currentModeId}`);
-await session.setModel("sdk/browser-test-model");
+await session.setModel(ANTHROPIC_FAST_MODEL);
 if (session.configOptions.some((option) => option.id === "provider")) throw new Error("WASM model update advertised unsupported provider switching");
-if (session.configOptions.find((option) => option.id === "model")?.currentValue !== "sdk/browser-test-model") throw new Error("model option did not update");
-if (persistedConfig.get("model") !== "sdk/browser-test-model") throw new Error("accepted model was not persisted");
+if (session.configOptions.find((option) => option.id === "model")?.currentValue !== ANTHROPIC_FAST_MODEL) throw new Error("model option did not update");
+if (persistedConfig.get("model") !== ANTHROPIC_FAST_MODEL) throw new Error("accepted model was not persisted");
 failNextCommit = true;
 let modelCommitRejected = false;
 try { await session.setModel("sdk/rejected-model"); } catch { modelCommitRejected = true; }
 if (!modelCommitRejected) throw new Error("host session commit failure was accepted");
-if (!events.some((event) => event.type === "config.changed" && event.configId === "model" && event.value === "sdk/browser-test-model" && event.source === "sdk")) {
+if (!events.some((event) => event.type === "config.changed" && event.configId === "model" && event.value === ANTHROPIC_FAST_MODEL && event.source === "sdk")) {
   throw new Error("accepted agent model change did not emit config.changed");
 }
 if (!events.some((event) => event.type === "config.changed" && event.configId === "mode" && event.value === "code" && event.source === "restore")) {
@@ -156,10 +142,8 @@ const streamedText = chunks.join("").trimEnd();
 if (streamedText !== "hello world") throw new Error(`unexpected streamed text: ${JSON.stringify(chunks)}`);
 if (chunks.filter((chunk) => chunk.trim().length > 0).length < 2) throw new Error("token chunks were buffered instead of streamed incrementally");
 if (stopReason !== "end_turn") throw new Error(`unexpected stop reason: ${stopReason}`);
-if (fetchCalls !== 1) throw new Error(`expected one gateway fetch, got ${fetchCalls}`);
-if (requestedModel !== "sdk/browser-test-model") throw new Error(`gateway request used unexpected model: ${requestedModel}`);
-if (requestedSessionId !== session.id) throw new Error(`gateway request used unexpected session id: ${requestedSessionId}`);
-if (requestedSessionAffinity !== session.id) throw new Error(`gateway request used unexpected session affinity: ${requestedSessionAffinity}`);
+if (fetchCalls !== 1) throw new Error(`expected one chat fetch, got ${fetchCalls}`);
+if (requestedModel !== ANTHROPIC_FAST_MODEL) throw new Error(`chat request used unexpected model: ${requestedModel}`);
 
 await session.close();
 let closedSessionRejected = false;

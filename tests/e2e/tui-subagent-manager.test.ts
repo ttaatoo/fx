@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
+import { SUPERGROK_FAST_MODEL, SUPERGROK_MODEL, writeE2eXaiProviders } from "./direct-provider-env";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -335,7 +336,7 @@ async function seedSavedChat(
   key: string,
   title: string,
 ): Promise<SeededChat> {
-  const child = Bun.spawn([FX_BIN, "ask", "--json", "--auto", title], {
+  const child = Bun.spawn([FX_BIN, "ask", "--json", "--yolo", title], {
     cwd: fixture.workspace,
     env: relationshipTestEnv(fixture, gateway, key),
     stdout: "pipe",
@@ -4217,7 +4218,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
 
         const retired = await runAsk([
           "--json",
-          "--auto",
+          "--yolo",
           "--resume-id",
           oneOff.value.child_id,
           "must not resume",
@@ -4231,7 +4232,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
 
         const persistentControl = await runAsk([
           "--json",
-          "--auto",
+          "--yolo",
           "--resume-id",
           persistent.value.child_id,
           persistentResume,
@@ -4324,13 +4325,10 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
     "persistent child executes models locally and configures the selected model",
     async () => {
       const fixture = createFixture();
+      writeE2eXaiProviders(fixture.home);
       const childName = "child-local-models";
       const childPrompt = "CHILD_LOCAL_MODELS_INITIAL";
-      const selectedModel = "other/child-model";
-      let releaseModels!: () => void;
-      const modelsReady = new Promise<void>((resolve) => {
-        releaseModels = resolve;
-      });
+      const selectedModel = SUPERGROK_FAST_MODEL;
       const gateway = startDynamicFakeGateway((body) =>
         fakeGatewayFinalText(
           body.includes("/models")
@@ -4338,13 +4336,6 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
             : "CHILD_LOCAL_MODELS_READY",
         ), {
         classifierDecision: "allow",
-        models: async () => {
-          await modelsReady;
-          return [
-            { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
-            { id: selectedModel, type: "language", tags: ["tool-use"] },
-          ];
-        },
       });
 
       try {
@@ -4357,8 +4348,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
             VERCEL_OIDC_TOKEN: undefined,
             FX_GATEWAY_BASE_URL: gateway.baseUrl,
             FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
+            FX_MODEL: SUPERGROK_MODEL,
             FX_AUTO_UPGRADE: "0",
             FX_DISABLE_KEYCHAIN: "1",
             FX_SKIP_ONBOARDING: "1",
@@ -4385,19 +4375,6 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
         await active.waitForText("CHILD_LOCAL_MODELS_READY", TIMEOUT);
 
         const requestCountBeforeModels = gateway.requestCount();
-        await active.sendText("/models");
-        await active.waitForText("Loading models", TIMEOUT);
-        await active.sendKeys("C-x");
-        const mainWhileModelsLoad = await active.waitForPane(
-          (pane) =>
-            pane.includes("MAIN_MODELS_DRAFT") &&
-            !pane.includes("Loading models"),
-          TIMEOUT,
-        );
-        expect(mainWhileModelsLoad).toContain("MAIN_MODELS_DRAFT");
-        expect(gateway.requestCount()).toBe(requestCountBeforeModels);
-
-        releaseModels();
         await active.sendKeys("C-x");
         await active.waitForText("Agents & processes", TIMEOUT);
         await active.sendKeys("Enter");
@@ -4405,6 +4382,8 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
         await active.sendText("/models");
         const models = await active.waitForText(selectedModel, TIMEOUT);
         expect(models).toContain("Models 2");
+        expect(models).toContain(SUPERGROK_MODEL);
+        expect(models).not.toContain("no matching models");
         expect(gateway.requestCount()).toBe(requestCountBeforeModels);
         expect(
           gateway.requests.some((request) => request.body.includes("/models")),

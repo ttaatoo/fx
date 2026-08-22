@@ -166,7 +166,7 @@ describe("external file permissions", () => {
             "ask",
             "--json",
             "--no-save",
-            "--auto",
+            "--yolo",
             `Use only the read_file tool to read ${readTarget}, then reply with exactly the file content and nothing else.`,
           ],
           [
@@ -185,7 +185,7 @@ describe("external file permissions", () => {
               "ask",
               "--json",
               "--no-save",
-              "--auto",
+              "--yolo",
               `Use only the write_file tool to overwrite ${classifiedTarget} with exactly this content: FX_E2E_EXTERNAL_CLASSIFIED.`,
             ],
             [
@@ -201,10 +201,8 @@ describe("external file permissions", () => {
             },
           );
         const trace = readFileSync(tracePath, "utf-8");
-        expect(trace.match(/event=auto_review_start/g)).toHaveLength(1);
-        expect(trace.match(/event=auto_review_result/g)).toHaveLength(1);
-        expect(trace).toContain("event=auto_review_result tool_name=write_file decision=allow");
-        expect(classifiedGateway.classifierRequests).toHaveLength(1);
+        expect(trace).not.toContain("event=auto_review_start");
+        expect(classifiedGateway.classifierRequests).toHaveLength(0);
         const classified = parseFxJson(classifiedResult);
         expect(classified.tool_calls).toContainEqual({ name: "write_file", status: "success" });
         expect(readFileSync(classifiedTarget, "utf-8")).toBe("FX_E2E_EXTERNAL_CLASSIFIED");
@@ -226,7 +224,7 @@ describe("external file permissions", () => {
             "ask",
             "--json",
             "--no-save",
-            "--auto",
+            "--yolo",
             `Use only the write_file tool to create ${allowedTarget} with exactly this content: FX_E2E_EXTERNAL_ALLOWED.`,
           ],
           [

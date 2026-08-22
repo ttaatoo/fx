@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFxTerminal, supportsJspi } from "../node.js";
+import { anthropicSseResponse, wasmAnthropicEnv } from "./supergrok-fixture.mjs";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const defaultWasm = resolve(scriptDir, "../../zig-out/bin/fx-term.wasm");
@@ -18,14 +19,7 @@ const encoded = new TextEncoder();
 let fetchCalls = 0;
 const mockFetch = async () => {
   fetchCalls += 1;
-  return new Response(new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoded.encode('data: {"type":"text-delta","id":"answer","delta":"ZXQJ"}\n\n'));
-      controller.enqueue(encoded.encode('data: {"type":"finish","finishReason":{"unified":"stop","raw":"stop"},"usage":{"inputTokens":{"total":1},"outputTokens":{"total":1}}}\n\n'));
-      controller.enqueue(encoded.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  }), { status: 200, headers: { "content-type": "text/event-stream" } });
+  return anthropicSseResponse(["ZXQJ"]);
 };
 
 const records = new Map();
@@ -95,7 +89,7 @@ async function start(args = []) {
     wasm,
     args,
     terminal: capture.terminal,
-    env: { AI_GATEWAY_API_KEY: "term-session-test-key", FX_THEME: "dark" },
+    env: wasmAnthropicEnv({ FX_THEME: "dark" }),
     fetch: mockFetch,
     sessionStore,
   });
@@ -120,7 +114,7 @@ const first = await start();
 first.runtime.write("remember this browser turn\r");
 await waitFor(
   () => fetchCalls === 1,
-  "gateway response",
+  "chat response",
   () => `commits=${commits}, fetches=${fetchCalls}, output=${JSON.stringify(first.capture.text().slice(-1000))}`,
 );
 await waitFor(

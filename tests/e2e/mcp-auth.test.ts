@@ -580,7 +580,7 @@ function baseEnv(root: ReturnType<typeof createRoot>) {
     AI_GATEWAY_API_KEY: "fake-mcp-auth-key",
     VERCEL_OIDC_TOKEN: undefined,
     FX_AUTO_UPGRADE: "0",
-    FX_PERMISSION_MODE: "auto",
+    FX_PERMISSION_MODE: "yolo",
     FX_MODEL: MODEL,
     FX_TRACE_LOG: root.trace,
     FX_TRACE_SCOPES: "mcp,core",
@@ -787,7 +787,7 @@ describe("MCP remote authentication lifecycle", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Read an authenticated resource template."],
+      ["ask", "--json", "--yolo", "--no-save", "Read an authenticated resource template."],
       {
         cwd: root.workspace,
         env: {
@@ -874,7 +874,7 @@ describe("MCP remote authentication lifecycle", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use authenticated MCP features after rotation."],
+      ["ask", "--json", "--yolo", "--no-save", "Use authenticated MCP features after rotation."],
       {
         cwd: root.workspace,
         env: {
@@ -963,7 +963,7 @@ describe("MCP remote authentication lifecycle", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Check private MCP features after failed rotation."],
+      ["ask", "--json", "--yolo", "--no-save", "Check private MCP features after failed rotation."],
       {
         cwd: root.workspace,
         env: {
@@ -1089,7 +1089,7 @@ describe("MCP remote authentication lifecycle", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Reuse public MCP state after auth rotation."],
+      ["ask", "--json", "--yolo", "--no-save", "Reuse public MCP state after auth rotation."],
       {
         cwd: root.workspace,
         env: {
@@ -1182,7 +1182,7 @@ describe("MCP remote authentication lifecycle", () => {
       });
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Read the same authenticated MCP resource twice."],
+        ["ask", "--json", "--yolo", "--no-save", "Read the same authenticated MCP resource twice."],
         {
           cwd: root.workspace,
           env: {
@@ -1254,7 +1254,7 @@ describe("MCP remote authentication lifecycle", () => {
       models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
     });
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Refresh the active authenticated subscription."],
+      ["ask", "--json", "--yolo", "--no-save", "Refresh the active authenticated subscription."],
       {
         cwd: root.workspace,
         env: {
@@ -1310,7 +1310,7 @@ describe("MCP remote authentication lifecycle", () => {
       });
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Recover the subscription."],
+        ["ask", "--json", "--yolo", "--no-save", "Recover the subscription."],
         {
           cwd: root.workspace,
           env: {
@@ -1358,7 +1358,7 @@ describe("MCP remote authentication lifecycle", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Load the rotated private catalog."],
+      ["ask", "--json", "--yolo", "--no-save", "Load the rotated private catalog."],
       {
         cwd: root.workspace,
         env: {
@@ -1425,7 +1425,7 @@ describe("MCP remote authentication lifecycle", () => {
       });
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Exercise the authenticated cache."],
+        ["ask", "--json", "--yolo", "--no-save", "Exercise the authenticated cache."],
         {
           cwd: root.workspace,
           env: {
@@ -1465,7 +1465,7 @@ describe("MCP remote authentication lifecycle", () => {
       });
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Find the protected MCP tool."],
+        ["ask", "--json", "--yolo", "--no-save", "Find the protected MCP tool."],
         {
           cwd: root.workspace,
           env: {
@@ -1522,7 +1522,7 @@ describe("MCP remote authentication lifecycle", () => {
       try {
         gateway = startToolGateway();
         const ask = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Call the authenticated MCP fixture."],
+          ["ask", "--json", "--yolo", "--no-save", "Call the authenticated MCP fixture."],
           {
             cwd: root.workspace,
             env: {
@@ -1667,7 +1667,7 @@ describe("MCP remote authentication lifecycle", () => {
       writeFileSync(credentialPath, JSON.stringify(stored), { mode: 0o600 });
 
       const ask = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Call the authenticated MCP fixture."],
+        ["ask", "--json", "--yolo", "--no-save", "Call the authenticated MCP fixture."],
         {
           cwd: root.workspace,
           env: {
@@ -1997,7 +1997,7 @@ describe("MCP remote authentication lifecycle", () => {
       gateway = startToolGateway();
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Call the protected MCP fixture."],
+        ["ask", "--json", "--yolo", "--no-save", "Call the protected MCP fixture."],
         {
           cwd: root.workspace,
           env: {
@@ -2034,7 +2034,7 @@ describe("MCP remote authentication lifecycle", () => {
       gateway = startToolGateway();
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Call the protected legacy fixture."],
+        ["ask", "--json", "--yolo", "--no-save", "Call the protected legacy fixture."],
         {
           cwd: root.workspace,
           env: {
@@ -2069,7 +2069,7 @@ describe("MCP remote authentication lifecycle", () => {
       gateway = startToolGateway();
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Call the protected SSE fixture."],
+        ["ask", "--json", "--yolo", "--no-save", "Call the protected SSE fixture."],
         {
           cwd: root.workspace,
           env: {
@@ -2347,7 +2347,7 @@ describe("MCP remote authentication lifecycle", () => {
         );
 
         const result = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Call the protected legacy fixture."],
+          ["ask", "--json", "--yolo", "--no-save", "Call the protected legacy fixture."],
           {
             cwd: root.workspace,
             env: {
@@ -2390,7 +2390,7 @@ describe("MCP remote authentication lifecycle", () => {
       );
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Call the protected SSE fixture."],
+        ["ask", "--json", "--yolo", "--no-save", "Call the protected SSE fixture."],
         {
           cwd: root.workspace,
           env: {
@@ -2714,7 +2714,7 @@ describe("MCP remote authentication lifecycle", () => {
       });
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Check the MCP fixture."],
+        ["ask", "--json", "--yolo", "--no-save", "Check the MCP fixture."],
         {
           cwd: root.workspace,
           env: {

@@ -174,21 +174,21 @@ function withTimeout(promise, message, timeoutMs) {
 }
 
 try {
-  await runCase("incremental stream", "transport=mock&autorun=say%20hello&chunk-delay=75&model=sdk%2Fchrome-model&mode=code", (result) => {
+  await runCase("incremental stream", "transport=mock&autorun=say%20hello&chunk-delay=75&model=claude-opus-4-6&mode=code", (result) => {
     const modelChunks = result.chunks.filter((chunk) => !chunk.startsWith("[context]"));
     expect(result.stopReason === "end_turn", `unexpected stop reason ${result.stopReason}`);
     expect(modelChunks.join("").trimEnd() === "hello world", `unexpected chunks ${JSON.stringify(result.chunks)}`);
     expect(modelChunks.filter((chunk) => chunk.trim()).length >= 2, "browser stream was buffered");
     expect(result.fetchCalls === 1, `expected one prompt fetch, got ${result.fetchCalls}`);
-    expect(result.models.includes("sdk/catalog-alpha"), "browser model options omitted sdk/catalog-alpha");
-    expect(result.models.includes("sdk/catalog-beta"), "browser model options omitted sdk/catalog-beta");
-    expect(result.model === "sdk/chrome-model", `unexpected model ${result.model}`);
+    expect(result.models.includes("claude-opus-4-6"), "browser model options omitted claude-opus-4-6");
+    expect(result.models.includes("claude-sonnet-4-6"), "browser model options omitted claude-sonnet-4-6");
+    expect(result.model === "claude-opus-4-6", `unexpected model ${result.model}`);
     expect(result.mode === "code", `unexpected mode ${result.mode}`);
   });
   await runCase("stalled cancellation", "transport=stall&autorun=wait&cancel-after=50", (result) => {
     expect(result.stopReason === "cancelled", `unexpected stop reason ${result.stopReason}`);
     expect(result.fetchAborted, "browser fetch did not receive abort");
-    expect(result.model === "sdk/chrome-model", `stored browser model was not restored: ${result.model}`);
+    expect(result.model === "claude-opus-4-6", `stored browser model was not restored: ${result.model}`);
     expect(result.mode === "code", `stored browser mode was not restored: ${result.mode}`);
   });
   await runCase("unsupported UI", "force-unsupported=1", (result) => {

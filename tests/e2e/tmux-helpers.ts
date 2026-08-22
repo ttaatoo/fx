@@ -14,6 +14,7 @@ import { FX_BIN, REPO_ROOT } from "../evals/eval-helpers";
 import {
   FAKE_DIRECT_MODEL,
   adaptRetiredGatewayTestEnv,
+  ensureTuiSupergrokHome,
 } from "./direct-provider-env";
 
 let sessionCounter = 0;
@@ -217,10 +218,102 @@ function anthropicSseFromLegacyEvents(events: object[]): string {
   return parts.join("");
 }
 
+function openaiSseFromLegacyEvents(events: object[]): string {
+  const parts: string[] = [];
+  let toolIndex = 0;
+  for (const event of events) {
+    const item = event as {
+      type?: string;
+      delta?: string;
+      toolCallId?: string;
+      toolName?: string;
+      input?: unknown;
+      finishReason?: { unified?: string; raw?: string };
+      usage?: {
+        inputTokens?: { total?: number };
+        outputTokens?: { total?: number };
+      };
+    };
+    if (item.type === "text-delta") {
+      parts.push(sseData({
+        id: "chatcmpl_e2e",
+        object: "chat.completion.chunk",
+        choices: [{
+          index: 0,
+          delta: { content: item.delta ?? "" },
+          finish_reason: null,
+        }],
+      }));
+      continue;
+    }
+    if (item.type === "tool-call") {
+      const input = typeof item.input === "string"
+        ? item.input
+        : JSON.stringify(item.input ?? {});
+      parts.push(sseData({
+        id: "chatcmpl_e2e",
+        object: "chat.completion.chunk",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: toolIndex,
+              id: item.toolCallId ?? `tool_${toolIndex}`,
+              type: "function",
+              function: {
+                name: item.toolName ?? "unknown",
+                arguments: input,
+              },
+            }],
+          },
+          finish_reason: null,
+        }],
+      }));
+      toolIndex += 1;
+      continue;
+    }
+    if (item.type === "finish") {
+      const raw = item.finishReason?.unified ?? item.finishReason?.raw ?? "stop";
+      const reason = raw === "tool-calls" || raw === "tool_use" ? "tool_calls" : "stop";
+      parts.push(sseData({
+        id: "chatcmpl_e2e",
+        object: "chat.completion.chunk",
+        choices: [{
+          index: 0,
+          delta: {},
+          finish_reason: reason,
+        }],
+        usage: {
+          prompt_tokens: item.usage?.inputTokens?.total ?? 3,
+          completion_tokens: item.usage?.outputTokens?.total ?? 5,
+        },
+      }));
+      continue;
+    }
+  }
+  parts.push("data: [DONE]\n\n");
+  return parts.join("");
+}
+
+const fakeCompletionEvents = new WeakMap<Response, object[]>();
+
 export function fakeGatewaySse(events: object[]) {
-  return new Response(anthropicSseFromLegacyEvents(events), {
+  const response = new Response(anthropicSseFromLegacyEvents(events), {
     headers: { "content-type": "text/event-stream" },
   });
+  fakeCompletionEvents.set(response, events);
+  return response;
+}
+
+function completionResponseForPath(path: string, response: Response): Response {
+  const events = fakeCompletionEvents.get(response);
+  if (!events) return response;
+  if (path.includes("chat/completions")) {
+    return new Response(openaiSseFromLegacyEvents(events), {
+      headers: { "content-type": "text/event-stream" },
+    });
+  }
+  return response;
 }
 
 export function fakeGatewayToolCall(
@@ -335,7 +428,7 @@ export function heldFakeGatewayFinalText() {
       return;
     }
     stopTimer();
-    controller.enqueue(encoder.encode(anthropicSseFromLegacyEvents([
+    const events = [
       { type: "text-delta", id: "answer_1", delta: text },
       {
         type: "finish",
@@ -345,7 +438,8 @@ export function heldFakeGatewayFinalText() {
           outputTokens: { total: 5 },
         },
       },
-    ])));
+    ];
+    controller.enqueue(encoder.encode(openaiSseFromLegacyEvents(events)));
     close();
   };
   const createResponse = () => new Response(
@@ -469,7 +563,8 @@ function serveFakeGateway(
         return fakeGatewayPermissionDecision(options.classifierDecision ?? "allow");
       }
       requests.push({ body, headers });
-      return nextCompletion(body);
+      const response = await nextCompletion(body);
+      return completionResponseForPath(new URL(req.url).pathname, response);
     },
   });
   return {
@@ -551,6 +646,7 @@ export class TmuxSession {
       socketName,
     } = opts ?? {};
     const env = adaptRetiredGatewayTestEnv(rawEnv);
+    ensureTuiSupergrokHome(typeof env.HOME === "string" ? env.HOME : undefined, env);
 
     if (
       minimumHistoryLines !== undefined &&

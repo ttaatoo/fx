@@ -48,9 +48,7 @@ TRAINING_E2E_TESTS = (
 )
 
 VERIFICATION_E2E_TESTS = (
-    "auto-mode-reliability.test.ts",
     "tui-composer-edit-contracts.test.ts",
-    "tui-cost.test.ts",
     "tui-decision-prompts.test.ts",
     "tui-file-picker.test.ts",
     "tui-input-line-delete.test.ts",
@@ -358,7 +356,7 @@ class PgsoCorpusTests(unittest.TestCase):
             tuple(test_file for test_file, _ in corpus.intentional_exclusions),
         )
         self.assertEqual(31, len(corpus.scenarios))
-        self.assertEqual(46, len(corpus.candidate_scenarios))
+        self.assertEqual(44, len(corpus.candidate_scenarios))
         self.assertEqual(
             100,
             next(

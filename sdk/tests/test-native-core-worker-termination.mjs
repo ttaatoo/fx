@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
+import { createSdkHome, SUPERGROK_MODEL } from "./supergrok-fixture.mjs";
 
 const server = createServer((request) => request.resume());
 await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
@@ -11,6 +12,8 @@ const { port } = server.address();
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const addonPath = resolve(process.argv[2] || resolve(scriptDir, "../../zig-out/lib/libfx.node"));
 const nodeModuleUrl = pathToFileURL(resolve(scriptDir, "../node.js")).href;
+const home = createSdkHome();
+const chatBaseUrl = `http://127.0.0.1:${port}/v1`;
 
 try {
   const worker = new Worker(`
@@ -20,10 +23,11 @@ try {
       const agent = await createFxAgent({
         nativeAddon: workerData.addonPath,
         backend: "native",
+        home: workerData.home,
+        workspaceRoot: workerData.home,
         env: {
           AI_GATEWAY_API_KEY: "worker-termination-key",
-          FX_GATEWAY_CHAT_URL: workerData.gatewayUrl,
-          FX_MODEL: "native/test-model",
+          FX_MODEL: workerData.model,
         },
       });
       const session = await agent.createSession();
@@ -32,10 +36,16 @@ try {
     })().catch((error) => { throw error; });
   `, {
     eval: true,
+    env: {
+      ...process.env,
+      HOME: home,
+      GROK_CLI_CHAT_PROXY_BASE_URL: chatBaseUrl,
+    },
     workerData: {
       addonPath,
       nodeModuleUrl,
-      gatewayUrl: `http://127.0.0.1:${port}/stall`,
+      home,
+      model: SUPERGROK_MODEL,
     },
   });
   await new Promise((resolveStarted, reject) => {
