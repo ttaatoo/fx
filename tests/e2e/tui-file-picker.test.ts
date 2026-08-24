@@ -14,8 +14,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, HAS_API_KEY, runFx } from "../evals/eval-helpers";
+import { SUPERGROK_MODEL, writeE2eGrokAuth } from "./direct-provider-env";
 import {
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   isComposerLine,
   startFakeGateway,
@@ -166,6 +166,7 @@ function createFixture(prefix: string): Fixture {
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fx"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
+  writeE2eGrokAuth(home);
   const created = {
     root,
     home,
@@ -222,7 +223,7 @@ function mockFxEnvironment(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
     FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    FX_MODEL: SUPERGROK_MODEL,
     FX_AUTO_UPGRADE: "0",
     FX_TRACE_LOG: current.tracePath,
     FX_TRACE_SCOPES: "input,core,prompt,gateway,resize",
@@ -1653,15 +1654,20 @@ describe("@ file picker", () => {
 
       expect(gateway?.requests).toHaveLength(1);
       const request = JSON.parse(gateway!.requests[0]!.body) as {
-        prompt: Array<{ role: string; content: unknown }>;
+        prompt?: Array<{ role?: string; content?: unknown }>;
+        messages?: Array<{ role?: string; content?: unknown }>;
       };
-      expect(request.prompt.at(-1)).toEqual({
-        role: "user",
-        content: [{
-          type: "text",
-          text: '@"~/space dir/item.txt" Reply with FILESYSTEM_PATH_PROMPT_OK.',
-        }],
-      });
+      const messages = request.messages ?? request.prompt ?? [];
+      const lastUser = [...messages].reverse().find((message) => message.role === "user");
+      const content = lastUser?.content;
+      const text = typeof content === "string"
+        ? content
+        : Array.isArray(content)
+        ? (content[0] as { text?: string } | undefined)?.text
+        : undefined;
+      expect(text).toBe(
+        '@"~/space dir/item.txt" Reply with FILESYSTEM_PATH_PROMPT_OK.',
+      );
       expect(gateway?.requests[0]?.body).not.toContain(
         "FILE_CONTENT_MUST_NOT_BE_ATTACHED_7C91",
       );

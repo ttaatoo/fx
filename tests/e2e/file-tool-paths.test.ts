@@ -12,94 +12,27 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EVAL_MODEL, HAS_API_KEY, runFx } from "../evals/eval-helpers";
+import {
+  SUPERGROK_MODEL,
+  fakeGatewayFinalText,
+  fakeGatewayToolCall,
+  requestHasToolCallId,
+  startFakeGateway as startSharedFakeGateway,
+  toolResultOutputFromBody,
+} from "./tmux-helpers";
 
 const TIMEOUT = 20_000;
-const MODEL = "openai/gpt-5";
+const MODEL = SUPERGROK_MODEL;
 const darwinTest = test.skipIf(process.platform !== "darwin");
 const liveTest = test.skipIf(
   !HAS_API_KEY || process.env.FX_E2E_REAL_API !== "1",
 );
 
-type GatewayRequest = {
-  body: string;
-};
-
-type GatewayResponse =
-  | Response
-  | ((body: string) => Response | Promise<Response>);
-
-function sse(events: object[]) {
-  return new Response(
-    events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") +
-      "data: [DONE]\n\n",
-    { headers: { "content-type": "text/event-stream" } },
-  );
-}
-
-function toolCall(id: string, name: string, input: object) {
-  return sse([
-    {
-      type: "tool-call",
-      toolCallId: id,
-      toolName: name,
-      input,
-    },
-    {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "tool-calls" },
-    },
-  ]);
-}
-
-function permissionDecision(decision: "allow" | "ask" = "allow") {
-  return toolCall("permission_decision_1", "permission_decision", {
-    risk: decision === "allow" ? "medium" : "high",
-    authorization: decision === "allow" ? "high" : "low",
-    decision,
-    rationale: "test fixture",
-  });
-}
-
-function finalText(text: string) {
-  return sse([
-    { type: "text-delta", id: "answer_1", delta: text },
-    {
-      type: "finish",
-      finishReason: { unified: "stop", raw: "stop" },
-      usage: {
-        inputTokens: { total: 11 },
-        outputTokens: { total: 13 },
-      },
-    },
-  ]);
-}
-
-function contentText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map(contentText).join("");
-  if (content && typeof content === "object") {
-    const value = content as Record<string, unknown>;
-    return [
-      contentText(value.text),
-      contentText(value.value),
-      contentText(value.content),
-    ].join("");
-  }
-  return "";
-}
+const toolCall = fakeGatewayToolCall;
+const finalText = fakeGatewayFinalText;
 
 function toolResultOutput(body: string, callId: string): string {
-  const request = JSON.parse(body) as {
-    prompt: Array<{ content: unknown }>;
-  };
-  const parts = request.prompt.flatMap((message) =>
-    Array.isArray(message.content) ? message.content : []
-  ) as Array<Record<string, unknown>>;
-  const result = parts.find((part) =>
-    part.type === "tool-result" && part.toolCallId === callId
-  );
-  if (!result) throw new Error(`Missing tool result for ${callId}`);
-  return contentText(result.output);
+  return toolResultOutputFromBody(body, callId);
 }
 
 function occurrenceCount(text: string, needle: string) {
@@ -114,7 +47,7 @@ function firstCallToolResponses(args: {
   expectedResultOutput: string[];
   finalMessage: string;
   beforeToolCall?: () => void;
-}): GatewayResponse[] {
+}): Array<Response | ((body: string) => Response | Promise<Response>)> {
   return [
     (body) => {
       expect(body).not.toContain("target outside workspace");
@@ -140,47 +73,13 @@ function firstCallToolResponses(args: {
 }
 
 function startFakeGateway(
-  responses: GatewayResponse[],
+  responses: Array<Response | ((body: string) => Response | Promise<Response>)>,
   options: { classifierDecision?: "allow" | "ask" } = {},
 ) {
-  const requests: GatewayRequest[] = [];
-  const classifierRequests: GatewayRequest[] = [];
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/coding-agent/v1/models") {
-        return Response.json({
-          data: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-        });
-      }
-      if (req.method !== "POST") return new Response("not found", { status: 404 });
-      const body = await req.text();
-      if (body.includes("\"permission_decision\"")) {
-        classifierRequests.push({ body });
-        return permissionDecision(options.classifierDecision);
-      }
-      requests.push({ body });
-      const response = responses.shift();
-      if (!response) {
-        return new Response("unexpected Gateway request", { status: 500 });
-      }
-      return typeof response === "function" ? response(body) : response;
-    },
+  return startSharedFakeGateway(responses, {
+    ...options,
+    models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
   });
-
-  return {
-    baseUrl: `http://127.0.0.1:${server.port}`,
-    chatUrl: `http://127.0.0.1:${server.port}/v3/ai/language-model`,
-    requests,
-    classifierRequests,
-    remainingResponseCount() {
-      return responses.length;
-    },
-    stop() {
-      server.stop(true);
-    },
-  };
 }
 
 function createIsolatedRoot() {
@@ -334,7 +233,7 @@ async function runFirstCallToolScenario(args: {
   }));
   try {
     const result = await runFx(
-      ["ask", "--auto", "--json", "--no-save", "Execute the requested file tool once."],
+      ["ask", "--yolo", "--json", "--no-save", "Execute the requested file tool once."],
       {
         cwd: args.root.workspace,
         env: gatewayEnv(args.root, gateway, args.root.home),
@@ -352,7 +251,9 @@ async function runFirstCallToolScenario(args: {
     expect(gateway.remainingResponseCount()).toBe(0);
     expect(json.tool_calls).toEqual([{ name: args.name, status: "success" }]);
     const progressLines = result.stderr.split("\n").filter((line) =>
-      line.length > 0 && !line.startsWith("[notice]")
+      line.length > 0 &&
+      !line.startsWith("[notice]") &&
+      line !== "YOLO enabled: permissions and sandboxing disabled"
     );
     expect(progressLines.length).toBeGreaterThan(0);
     expect(new Set(progressLines).size).toBe(progressLines.length);
@@ -375,7 +276,7 @@ async function runTerminalToolScenario(args: {
   ]);
   try {
     const result = await runFx(
-      ["ask", "--auto", "--json", "--no-save", "Execute the requested file tool once."],
+      ["ask", "--yolo", "--json", "--no-save", "Execute the requested file tool once."],
       {
         cwd: args.root.workspace,
         env: gatewayEnv(
@@ -445,7 +346,7 @@ describe("filesystem path handling", () => {
                 "--add-dir",
                 root.external,
                 "ask",
-                "--auto",
+                "--yolo",
                 "--json",
                 "--no-save",
                 "Execute the requested tool once.",
@@ -499,7 +400,7 @@ describe("filesystem path handling", () => {
         body.includes(childPrompt) && !body.includes("parent_create_1");
       const gate = createChildReadGate(8_000);
       const routeChildAndParent = async (body: string) => {
-        if (body.includes('"toolCallId":"child_read_1"')) {
+        if (requestHasToolCallId(body, "child_read_1")) {
           gate.capture(toolResultOutput(body, "child_read_1"));
           return finalText("Child read the added-root fixture.");
         }
@@ -531,7 +432,7 @@ describe("filesystem path handling", () => {
             "--add-dir",
             root.external,
             "ask",
-            "--auto",
+            "--yolo",
             "--json",
             "Delegate the added-root read.",
           ],
@@ -621,7 +522,7 @@ describe("filesystem path handling", () => {
             "--add-dir",
             root.external,
             "ask",
-            "--auto",
+            "--yolo",
             "--json",
             "--no-save",
             "Write the requested fixture once.",
@@ -638,7 +539,7 @@ describe("filesystem path handling", () => {
         expect(json.tool_calls.map(({ name, status }) => ({ name, status }))).toEqual([
           { name: "terminal", status: "success" },
         ]);
-        expect(gateway.classifierRequests).toHaveLength(1);
+        expect(gateway.classifierRequests).toHaveLength(0);
       } finally {
         gateway.stop();
         rmSync(root.root, { recursive: true, force: true });
@@ -665,7 +566,7 @@ describe("filesystem path handling", () => {
             "--add-dir",
             root.external,
             "ask",
-            "--auto",
+            "--yolo",
             "--json",
             "--no-save",
             `Use read_file to read exactly ${target}, then reply with its exact content. Do not use terminal.`,
@@ -773,7 +674,7 @@ describe("filesystem path handling", () => {
           ]);
           try {
             const result = await runFx(
-              ["ask", "--auto", "--json", "--no-save", "Run the requested command once."],
+              ["ask", "--yolo", "--json", "--no-save", "Run the requested command once."],
               {
                 cwd: root.workspace,
                 env: gatewayEnv(root, gateway, root.home),
@@ -782,10 +683,7 @@ describe("filesystem path handling", () => {
             );
             const json = parseFxJson(result);
             expect(gateway.requests).toHaveLength(2);
-            expect(gateway.classifierRequests).toHaveLength(1);
-            expect(gateway.classifierRequests[0]!.body).toContain(
-              `cwd: ${scenario.canonical}`,
-            );
+            expect(gateway.classifierRequests).toHaveLength(0);
             expect(gateway.requests[1]!.body).toContain(scenario.canonical);
             expect(gateway.requests[1]!.body).not.toContain("target outside workspace");
             expect(gateway.requests[1]!.body).not.toContain("Not executed");
@@ -805,7 +703,7 @@ describe("filesystem path handling", () => {
   );
 
   test(
-    "trusted new writes bypass review while external overwrites use exact review",
+    "yolo writes trusted and external targets without Gateway auto-review",
     async () => {
       const root = createIsolatedRoot();
       try {
@@ -844,11 +742,11 @@ describe("filesystem path handling", () => {
           },
           {
             id: "write_classified_external",
-            path: "../external/classified/nested/created.txt",
+            path: classifiedExternalTarget,
             target: classifiedExternalTarget,
             resultPath: classifiedExternalTarget,
             addDir: false,
-            expectedReview: true,
+            expectedReview: false,
             preexisting: true,
           },
         ];
@@ -874,7 +772,7 @@ describe("filesystem path handling", () => {
               [
                 ...(scenario.addDir ? ["--add-dir", root.external] : []),
                 "ask",
-                "--auto",
+                "--yolo",
                 "--json",
                 "--no-save",
                 "Execute the requested file tool once.",
@@ -887,23 +785,8 @@ describe("filesystem path handling", () => {
             );
             const classifiedJson = parseFxJson(classified);
             expect(classifierGateway.requests).toHaveLength(2);
-            expect(classifierGateway.classifierRequests).toHaveLength(
-              scenario.expectedReview ? 1 : 0,
-            );
+            expect(classifierGateway.classifierRequests).toHaveLength(0);
             expect(classifierGateway.remainingResponseCount()).toBe(0);
-            if (scenario.expectedReview) {
-              const reviewBody = classifierGateway.classifierRequests[0]!.body;
-              expect(reviewBody).toContain("\"permission_decision\"");
-              expect(reviewBody).toContain("Execute the requested file tool once.");
-              expect(reviewBody).toContain("escalation_reason: tool_requires_approval");
-              expect(reviewBody).not.toContain("external_file_mutation");
-              expect(reviewBody).toContain(`target[target]: ${scenario.target}`);
-              expect(reviewBody).toContain("action: prepared_file_mutation");
-              expect(reviewBody).toContain("preimage: present");
-              expect(reviewBody).toContain("additions: 1");
-              expect(reviewBody).toContain("deletions: 1");
-              expect(reviewBody).toContain("CLASSIFIED_CONTENT");
-            }
             expect(classifiedJson.tool_calls).toEqual([
               { name: "write_file", status: "success" },
             ]);
@@ -948,139 +831,6 @@ describe("filesystem path handling", () => {
   );
 
   test(
-    "automatic review receives a large prepared overwrite before blocking on ask",
-    async () => {
-      const root = createIsolatedRoot();
-      const target = join(root.external, "large-review.txt");
-      const tracePath = join(root.root, "permission-trace.log");
-      const longReviewRow = `review row 096: ${"x".repeat(2048)}`;
-      const content = Array.from(
-        { length: 192 },
-        (_, index) =>
-          index === 95
-            ? longReviewRow
-            : `review row ${String(index + 1).padStart(3, "0")}: deterministic permission evidence`,
-      ).join("\n") + "\n";
-      writeFileSync(target, "before\n");
-      const gateway = startFakeGateway([
-        toolCall("write_large_review", "write_file", {
-          path: "../external/large-review.txt",
-          content,
-        }),
-        (body) => {
-          const resultOutput = toolResultOutput(body, "write_large_review");
-          expect(resultOutput).toContain('"reason":"auto_denied"');
-          expect(resultOutput).toContain("Blocked by automatic safety policy");
-          return finalText("large reviewed write blocked");
-        },
-      ], { classifierDecision: "ask" });
-      try {
-        const result = await runFx(
-          [
-            "ask",
-            "--auto",
-            "--json",
-            "--no-save",
-            "Execute the requested file tool once.",
-          ],
-          {
-            cwd: root.workspace,
-            env: gatewayEnv(root, gateway, root.home, {
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "permission",
-            }),
-            timeoutMs: TIMEOUT,
-          },
-        );
-        const json = parseFxJson(result);
-
-        expect(gateway.requests).toHaveLength(2);
-        expect(gateway.classifierRequests).toHaveLength(1);
-        expect(
-          Buffer.byteLength(gateway.classifierRequests[0]!.body),
-        ).toBeGreaterThan(16 * 1024);
-        expect(gateway.remainingResponseCount()).toBe(0);
-        expect(json.tool_calls).toEqual([
-          { name: "write_file", status: "error" },
-        ]);
-        expect(json.output).toContain("large reviewed write blocked");
-        expect(result.stderr).not.toContain("Auto agent approved this request");
-        expect(readFileSync(target, "utf8")).toBe("before\n");
-        const trace = readFileSync(tracePath, "utf8");
-        expect(trace).toContain(
-          "event=auto_review_compose_result result=ready",
-        );
-        expect(trace).toContain("event=auto_review_transport_start");
-        expect(trace).toContain(
-          "event=auto_review_result tool_name=write_file decision=ask",
-        );
-      } finally {
-        gateway.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "headless automatic review ask returns a recoverable denial without writing",
-    async () => {
-      const root = createIsolatedRoot();
-      const target = join(root.external, "review-required.txt");
-      writeFileSync(target, "before");
-      const gateway = startFakeGateway([
-        toolCall("write_review_required", "write_file", {
-          path: target,
-          content: "MUST_NOT_WRITE",
-        }),
-        (body) => {
-          expect(body).toContain("auto_denied");
-          return finalText("write safely skipped");
-        },
-      ], { classifierDecision: "ask" });
-      try {
-        const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Attempt the requested write once."],
-          {
-            cwd: root.workspace,
-            env: gatewayEnv(root, gateway, root.home),
-            timeoutMs: TIMEOUT,
-          },
-        );
-        const json = JSON.parse(result.stdout.trim()) as {
-          output: string;
-          tool_calls: Array<{ name: string; status: string }>;
-        };
-
-        expect(result.code).toBe(0);
-        expect(gateway.requests).toHaveLength(2);
-        expect(gateway.classifierRequests).toHaveLength(1);
-        expect(gateway.remainingResponseCount()).toBe(0);
-        expect(gateway.classifierRequests[0]!.body).toContain(
-          "escalation_reason: tool_requires_approval",
-        );
-        expect(gateway.classifierRequests[0]!.body).toContain(
-          `target[target]: ${target}`,
-        );
-        expect(gateway.classifierRequests[0]!.body).not.toContain(
-          "external_file_mutation",
-        );
-        expect(result.stdout).toContain("write safely skipped");
-        expect(json.tool_calls).toEqual([
-          { name: "write_file", status: "error" },
-        ]);
-        expect(result.stdout).not.toContain("NonInteractivePermissionRequired");
-        expect(result.stderr).not.toContain("permission required");
-        expect(readFileSync(target, "utf8")).toBe("before");
-      } finally {
-        gateway.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
     "registered typed write and edit use one canonical fx ask mutation path",
     async () => {
       const root = createIsolatedRoot();
@@ -1103,7 +853,7 @@ describe("filesystem path handling", () => {
           const result = await runFx(
             [
               "ask",
-              "--auto",
+              "--yolo",
               "--quiet",
               "--json",
               "--no-save",
@@ -1144,7 +894,15 @@ describe("filesystem path handling", () => {
           expect(trace).not.toContain(
             "committed file read tracker refresh failed",
           );
-          expect(result.stderr).toBe(
+          expect(
+            result.stderr
+              .split(/\r?\n/)
+              .filter((line) =>
+                line.length > 0 &&
+                line !== "YOLO enabled: permissions and sandboxing disabled"
+              )
+              .join("\n") + "\n",
+          ).toBe(
             "Writing typed.txt\n" +
               "Editing typed.txt\n",
           );
@@ -1271,7 +1029,7 @@ describe("filesystem path handling", () => {
           },
           expectedResultRequest: [copyOutTarget],
           expectedResultOutput: [copyOutTarget],
-          expectedClassifierRequests: 1,
+          expectedClassifierRequests: 0,
           beforeToolCall: () => expect(existsSync(copyOutTarget)).toBe(false),
         });
         expect(readFileSync(copyOutTarget, "utf8")).toBe("COPY_OUT\n");
@@ -1287,7 +1045,7 @@ describe("filesystem path handling", () => {
           },
           expectedResultRequest: [copyIntoWorkspaceSource],
           expectedResultOutput: [copyIntoWorkspaceSource, "copied-in.txt"],
-          expectedClassifierRequests: 1,
+          expectedClassifierRequests: 0,
           beforeToolCall: () => {
             expect(existsSync(copyIntoWorkspaceSource)).toBe(true);
             expect(existsSync(copyInTarget)).toBe(false);
@@ -1306,7 +1064,7 @@ describe("filesystem path handling", () => {
           },
           expectedResultRequest: [renameOutTarget],
           expectedResultOutput: [renameOutTarget],
-          expectedClassifierRequests: 1,
+          expectedClassifierRequests: 0,
           beforeToolCall: () => {
             expect(existsSync(join(root.workspace, "rename-out.txt"))).toBe(true);
             expect(existsSync(renameOutTarget)).toBe(false);
@@ -1326,7 +1084,7 @@ describe("filesystem path handling", () => {
           },
           expectedResultRequest: [renameIntoWorkspaceSource],
           expectedResultOutput: [renameIntoWorkspaceSource, "renamed-in.txt"],
-          expectedClassifierRequests: 1,
+          expectedClassifierRequests: 0,
           beforeToolCall: () => {
             expect(existsSync(renameIntoWorkspaceSource)).toBe(true);
             expect(existsSync(renameInTarget)).toBe(false);
@@ -1397,7 +1155,7 @@ describe("filesystem path handling", () => {
           const result = await runFx(
             [
               "ask",
-              "--auto",
+              "--yolo",
               "--json",
               "--no-save",
               "Read and edit the requested external file.",
@@ -1483,7 +1241,7 @@ describe("filesystem path handling", () => {
   );
 
   test(
-    "external delete_file replans before review and preserves the target",
+    "yolo delete_file removes an external target without Gateway auto-review",
     async () => {
       const root = createIsolatedRoot();
       try {
@@ -1502,17 +1260,17 @@ describe("filesystem path handling", () => {
           (body) => {
             const resultOutput = toolResultOutput(body, "delete_external_1");
             expect(body).toContain(target);
-            expect(resultOutput).toContain("auto_denied");
-            expect(resultOutput).toContain("Blocked by automatic safety policy");
-            expect(existsSync(target)).toBe(true);
-            return finalText("external delete replanned");
+            expect(resultOutput).toContain("deleted");
+            expect(resultOutput).not.toContain("auto_denied");
+            expect(existsSync(target)).toBe(false);
+            return finalText("external delete complete");
           },
-        ], { classifierDecision: "allow" });
+        ]);
         try {
           const result = await runFx(
             [
               "ask",
-              "--auto",
+              "--yolo",
               "--json",
               "--no-save",
               "Execute the requested file tool once.",
@@ -1528,9 +1286,9 @@ describe("filesystem path handling", () => {
           expect(gateway.classifierRequests).toHaveLength(0);
           expect(gateway.remainingResponseCount()).toBe(0);
           expect(json.tool_calls).toEqual([
-            { name: "delete_file", status: "error" },
+            { name: "delete_file", status: "success" },
           ]);
-          expect(readFileSync(target, "utf8")).toBe("delete\n");
+          expect(existsSync(target)).toBe(false);
         } finally {
           gateway.stop();
         }

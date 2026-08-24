@@ -10,9 +10,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  HAS_API_KEY,
-} from "../evals/eval-helpers";
 import { readTrace } from "./tui-render-assertions";
 import {
   FAKE_GATEWAY_MODEL,
@@ -23,7 +20,7 @@ import {
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const SKIP = !tmuxAvailable() || !HAS_API_KEY;
+const SKIP = !tmuxAvailable();
 const TIMEOUT = 30_000;
 const LONG_TIMEOUT = 120_000;
 const TRACE_SCOPES = "agent,worker,gateway,tool,permission,history,interrupt,prompt";

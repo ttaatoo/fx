@@ -16,16 +16,19 @@ import {
   startModernMcpHttpFixture,
   type ModernHttpMode,
 } from "./fixtures/mcp-modern-http";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import {
   fakeGatewayFinalText,
   fakeGatewayToolCall,
+  requestHasToolCallId,
   startDynamicFakeGateway,
   startFakeGateway,
+  toolResultOutputFromBody,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const MODEL = "openai/gpt-5";
+const MODEL = SUPERGROK_MODEL;
 const TOOL_NAME = "mcp_fixture_echo";
 
 let cleanupRoot: string | null = null;
@@ -94,7 +97,7 @@ function fixtureEnv(
     AI_GATEWAY_API_KEY: "fake-mcp-http-key",
     VERCEL_OIDC_TOKEN: undefined,
     FX_AUTO_UPGRADE: "0",
-    FX_PERMISSION_MODE: "auto",
+    FX_PERMISSION_MODE: "yolo",
     FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
     FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: activeGateway.chatUrl,
@@ -115,20 +118,7 @@ function startToolGateway(finalText: string) {
 }
 
 function toolResultText(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) =>
-      part.type === "tool-result" && part.toolCallId === toolCallId
-    );
-  if (!result) throw new Error(`Missing tool result for ${toolCallId}`);
-  const output = result.output as Record<string, unknown>;
-  if (output.type !== "text" || typeof output.value !== "string") {
-    throw new Error(`Invalid tool result for ${toolCallId}`);
-  }
-  return output.value;
+  return toolResultOutputFromBody(body, toolCallId);
 }
 
 function preserveHttpFailure(
@@ -207,7 +197,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Refresh after the MCP resource update storm."],
+      ["ask", "--json", "--yolo", "--no-save", "Refresh after the MCP resource update storm."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -252,7 +242,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Recover the failed MCP resource refresh."],
+      ["ask", "--json", "--yolo", "--no-save", "Recover the failed MCP resource refresh."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -290,7 +280,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Refresh the expired MCP resource catalog."],
+      ["ask", "--json", "--yolo", "--no-save", "Refresh the expired MCP resource catalog."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -349,7 +339,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Try the removed MCP identities."],
+      ["ask", "--json", "--yolo", "--no-save", "Try the removed MCP identities."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -393,7 +383,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Reject the invalid MCP resource template match."],
+      ["ask", "--json", "--yolo", "--no-save", "Reject the invalid MCP resource template match."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -428,7 +418,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Read the deeply nested MCP catalog."],
+      ["ask", "--json", "--yolo", "--no-save", "Read the deeply nested MCP catalog."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -492,7 +482,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the modern HTTP MCP resource and prompt features."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the modern HTTP MCP resource and prompt features."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -549,7 +539,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Read the stalled HTTP MCP resource."],
+      ["ask", "--json", "--yolo", "--no-save", "Read the stalled HTTP MCP resource."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -596,7 +586,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Complete the stalled HTTP MCP prompt argument."],
+      ["ask", "--json", "--yolo", "--no-save", "Complete the stalled HTTP MCP prompt argument."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -635,7 +625,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the live MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the live MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -693,7 +683,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the stale MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the stale MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -743,7 +733,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use TTL after the unsupported filter."],
+      ["ask", "--json", "--yolo", "--no-save", "Use TTL after the unsupported filter."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -778,7 +768,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use TTL after server cancellation."],
+      ["ask", "--json", "--yolo", "--no-save", "Use TTL after server cancellation."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -816,7 +806,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use TTL after the unexpected filter."],
+      ["ask", "--json", "--yolo", "--no-save", "Use TTL after the unexpected filter."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -861,7 +851,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Do not send the invalidated tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Do not send the invalidated tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -916,7 +906,7 @@ describe("modern MCP Streamable HTTP", () => {
       });
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Search the MCP cache."],
+        ["ask", "--json", "--yolo", "--no-save", "Search the MCP cache."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway),
@@ -956,7 +946,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Search the delayed MCP catalog."],
+      ["ask", "--json", "--yolo", "--no-save", "Search the delayed MCP catalog."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1001,7 +991,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Search the empty-cursor MCP catalog."],
+      ["ask", "--json", "--yolo", "--no-save", "Search the empty-cursor MCP catalog."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1025,7 +1015,7 @@ describe("modern MCP Streamable HTTP", () => {
       gateway = startToolGateway(`${mode} MCP HTTP complete.`);
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", `Call the ${mode} HTTP fixture.`],
+        ["ask", "--json", "--yolo", "--no-save", `Call the ${mode} HTTP fixture.`],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway),
@@ -1050,7 +1040,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("Server-authoritative schema complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the schema fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the schema fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1146,7 +1136,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("Mixed SSE delimiters complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the mixed SSE fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the mixed SSE fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1187,7 +1177,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("Environment-backed MCP complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the environment-backed fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the environment-backed fixture."],
       {
         cwd: root.workspace,
         env: {
@@ -1226,7 +1216,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Do not call the invalid tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Do not call the invalid tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1249,7 +1239,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("Held-open SSE complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the held-open HTTP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the held-open HTTP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1278,7 +1268,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("HTTP timeout recovered.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the stalled HTTP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the stalled HTTP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1344,13 +1334,13 @@ describe("modern MCP Streamable HTTP", () => {
         if (body.includes(afterReloadPrompt)) {
           return fakeGatewayFinalText("AFTER_HTTP_RELOAD_ROOT_READY");
         }
-        if (body.includes('"toolCallId":"reload_http_child_call"')) {
+        if (requestHasToolCallId(body, "reload_http_child_call")) {
           return fakeGatewayFinalText("RELOAD_HTTP_CHILD_CANCELLED");
         }
-        if (body.includes('"toolCallId":"reload_http_child_select"')) {
+        if (requestHasToolCallId(body, "reload_http_child_select")) {
           return fakeGatewayToolCall("reload_http_child_call", TOOL_NAME, { text: "stall" });
         }
-        if (body.includes('"toolCallId":"reload_http_child_create"')) {
+        if (requestHasToolCallId(body, "reload_http_child_create")) {
           return fakeGatewayFinalText("RELOAD_HTTP_PARENT_READY");
         }
         if (body.includes(childPrompt)) {
@@ -1406,14 +1396,14 @@ describe("modern MCP Streamable HTTP", () => {
       const childWakeDeadline = Date.now() + 10_000;
       while (
         !gateway.requests.some((request) =>
-          request.body.includes('"toolCallId":"reload_http_child_call"')
+          requestHasToolCallId(request.body, "reload_http_child_call")
         ) &&
         Date.now() < childWakeDeadline
       ) {
         await Bun.sleep(25);
       }
       expect(gateway.requests.some((request) =>
-        request.body.includes('"toolCallId":"reload_http_child_call"')
+        requestHasToolCallId(request.body, "reload_http_child_call")
       )).toBe(true);
       expect(
         fixture.requests.filter((entry) => entry.message.method === "tools/call"),

@@ -36,27 +36,22 @@ TRAINING_E2E_TESTS = (
     "terminal-host.test.ts",
     "tui-startup.test.ts",
     "permission-errors.test.ts",
-    "tui-resize.test.ts",
     "tui-render-stress.test.ts",
     "tui-full-transcript-brutal.test.ts",
     "tui-resume-brutal.test.ts",
     "tui-permissions.test.ts",
     "tui-interrupt-recovery.test.ts",
-    "tui-subagent-manager.test.ts",
     "tui-terminal-tool.test.ts",
     "tui-native-clear-recovery.test.ts",
 )
 
 VERIFICATION_E2E_TESTS = (
-    "auto-mode-reliability.test.ts",
     "tui-composer-edit-contracts.test.ts",
-    "tui-cost.test.ts",
     "tui-decision-prompts.test.ts",
     "tui-file-picker.test.ts",
     "tui-input-line-delete.test.ts",
     "tui-input-navigation.test.ts",
     "tui-render-replay.test.ts",
-    "tui-resume.test.ts",
     "tui-slash-commands.test.ts",
     "tui-slash-extra.test.ts",
     "tui-slash-menu.test.ts",
@@ -77,7 +72,6 @@ EXCLUDED_E2E_TESTS = (
     "tui-render-lab.test.ts",
     "tui-render-live-stress.test.ts",
     "web-fetch-live.test.ts",
-    "web-search-live.test.ts",
 )
 
 
@@ -357,8 +351,8 @@ class PgsoCorpusTests(unittest.TestCase):
             EXCLUDED_E2E_TESTS,
             tuple(test_file for test_file, _ in corpus.intentional_exclusions),
         )
-        self.assertEqual(31, len(corpus.scenarios))
-        self.assertEqual(46, len(corpus.candidate_scenarios))
+        self.assertEqual(29, len(corpus.scenarios))
+        self.assertEqual(41, len(corpus.candidate_scenarios))
         self.assertEqual(
             100,
             next(

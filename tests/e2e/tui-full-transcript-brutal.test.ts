@@ -15,9 +15,9 @@ import {
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN } from "../evals/eval-helpers";
+import { SUPERGROK_MODEL, writeE2eGrokAuth } from "./direct-provider-env";
 import {
   composerContains,
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
   fakeGatewaySse,
   fakeGatewayToolCall,
@@ -198,7 +198,8 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    FX_MODEL: SUPERGROK_MODEL,
+    FX_PERMISSION_MODE: "yolo",
     FX_AUTO_UPGRADE: "0",
     NO_COLOR: "1",
   };
@@ -342,6 +343,7 @@ function prepareFixture(config: StressConfig): {
   const paths = makeRoot(config.label);
   mkdirSync(join(paths.home, ".fx"), { recursive: true });
   mkdirSync(paths.workspace);
+  writeE2eGrokAuth(paths.home);
   writeFileSync(paths.stderrPath, "");
   writeFileSync(paths.resumedStderrPath, "");
   writeFileSync(paths.tracePath, "");
@@ -350,7 +352,8 @@ function prepareFixture(config: StressConfig): {
     join(paths.home, ".fx", "settings.json"),
     JSON.stringify({
       sandbox: "none",
-      permission_mode: "auto",
+      permission_mode: "yolo",
+      yolo_acknowledged: true,
       permission: {},
       maxxing_mode: "legacy",
       max_agent_steps: config.batches + 12,
@@ -881,10 +884,13 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
     expect(history).toContain(compactToolMarker(0));
 
     await verifyTailSurvivesReviewToFull(session);
-    expect(readFileSync(paths.stderrPath, "utf8")).toBe("");
+    expect(readFileSync(paths.stderrPath, "utf8")).toMatch(
+      /^(?:YOLO enabled: permissions and sandboxing disabled\n)?$/,
+    );
 
     await session.sendText("Run the prepared live command while I inspect the transcript.");
     await session.waitForText(LIVE_START, TIMEOUT);
+    await session.waitForComposer(TIMEOUT);
     await session.sendLiteralText(DRAFT);
     await waitForMode(session, "main", DRAFT);
     const pid = fxProcessId(session);
@@ -1042,7 +1048,9 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
     expect(altStats.enters).toBeGreaterThanOrEqual(config.cycles);
     expect(altStats.leaves).toBe(altStats.enters);
     expect(altStats.depth).toBe(0);
-    expect(readFileSync(paths.stderrPath, "utf8")).toBe("");
+    expect(readFileSync(paths.stderrPath, "utf8")).toMatch(
+      /^(?:YOLO enabled: permissions and sandboxing disabled\n)?$/,
+    );
 
     const summary = writeMetrics();
     expect(summary.transitions.review.p95Ms).toBeLessThan(5_000);

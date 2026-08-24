@@ -3,11 +3,12 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY } from "../evals/eval-helpers";
+import { FX_BIN } from "../evals/eval-helpers";
+import { SUPERGROK_FAST_MODEL, SUPERGROK_MODEL, writeE2eXaiProviders } from "./direct-provider-env";
 import { TmuxSession, tmuxAvailable } from "./tmux-helpers";
 
 const TMUX_SKIP = !tmuxAvailable();
-const SKIP = TMUX_SKIP || !HAS_API_KEY;
+const SKIP = TMUX_SKIP;
 const TIMEOUT = 30_000;
 
 let session: TmuxSession | null = null;
@@ -26,6 +27,7 @@ async function launchAndWait(): Promise<TmuxSession> {
   const workspace = join(root, "workspace");
   mkdirSync(home);
   mkdirSync(workspace);
+  writeE2eXaiProviders(home);
   tempDirs.push(root);
   const s = await TmuxSession.create({
     cwd: workspace,
@@ -123,7 +125,7 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
           AI_GATEWAY_API_KEY: "status-compact-key",
           FX_AUTO_UPGRADE: "0",
           FX_DISABLE_KEYCHAIN: "1",
-          FX_PERMISSION_MODE: "auto",
+          FX_PERMISSION_MODE: "yolo",
           FX_RECORD: tapePath,
           FX_RECORD_INPUT: "1",
           VERCEL_OIDC_TOKEN: undefined,
@@ -141,8 +143,8 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
       for (const field of [
         "Run /help for commands",
         "auth_refreshable=",
-        "permission_mode=auto",
-        process.platform === "darwin" ? "sandbox=os" : "sandbox=none",
+        "permission_mode=yolo",
+        "sandbox=none",
       ]) {
         expect(scrollback.split(field)).toHaveLength(2);
       }
@@ -193,8 +195,10 @@ describe.skipIf(SKIP)("tui: slash commands", () => {
     async () => {
       session = await launchAndWait();
       await session.sendText("/models");
-      const pane = await session.waitForText(/anthropic|model/i, 10_000);
-      expect(pane.length).toBeGreaterThan(0);
+      const pane = await session.waitForText(SUPERGROK_MODEL, 10_000);
+      expect(pane).toContain(SUPERGROK_MODEL);
+      expect(pane).toContain(SUPERGROK_FAST_MODEL);
+      expect(pane).not.toContain("no matching models");
     },
     TIMEOUT,
   );
@@ -218,7 +222,7 @@ describe.skipIf(SKIP)("tui: slash commands", () => {
         "/foo",
         "/changes",
         "/review",
-        "/pr",
+        "/prd",
         "/issue",
         "/history",
         "/rules",

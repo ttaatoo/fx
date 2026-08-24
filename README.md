@@ -19,6 +19,8 @@ For end users, its CLI output style and form factor aim to be closer to a Unix s
 
 It's open source (Apache-2.0), model-agnostic, and suitable for both local and cloud inference.
 
+fx runs on Linux and macOS (x86_64 and aarch64). It does not support Windows, WebAssembly, or in-browser hosts.
+
 ## Install
 
 This repository is a same-repo Homebrew tap (`ttaatoo/fx`, not a separate `homebrew-fx`). Formula only. No cask.
@@ -44,7 +46,7 @@ brew install --formula --HEAD ttaatoo/fx/fx
 # brew reinstall ttaatoo/fx/fx
 ```
 
-`--HEAD` compiles from `main` with Homebrew's Zig 0.16. The stable formula downloads a prebuilt GitHub Release tarball (no bottles). This tap is `ttaatoo/fx` only. Homebrew-core `fx` is an unrelated JSON viewer.
+`--HEAD` compiles from `main` with Homebrew's Zig 0.16. The stable formula downloads a prebuilt GitHub Release tarball (no bottles). Pushes to `main` create a tagged GitHub Release when the version in source has no tag or GitHub Release yet; `brew install ttaatoo/fx/fx` uses those assets. This tap is `ttaatoo/fx` only. Homebrew-core `fx` is an unrelated JSON viewer.
 
 Or build from source with [Zig 0.16.0+](https://ziglang.org/download/):
 
@@ -118,15 +120,9 @@ Inside a saved session, `/permissions remember <allow|deny> <tool-name> <argumen
 
 ## Embed fx
 
-fx builds as a native binary or WebAssembly. Applications embedding fx can provide network transport, session storage, configuration, permission handling, and terminal I/O.
+Use `fx acp` to connect the native agent to editors and other Agent Client Protocol clients.
 
-| Surface | Use |
-| --- | --- |
-| `fx acp` | Connect the native agent to editors and other Agent Client Protocol clients. |
-| `createFxAgent()` | Embed the agent core in a JavaScript host with `fx-core.wasm`. |
-| `createFxTerminal()` | Embed the interactive terminal with `fx-term.wasm`. |
-
-The WebAssembly SDK is experimental. See the [WebAssembly SDK](sdk/README.md) and [ACP documentation](https://fx.sh/docs/using-fx/acp).
+See the [ACP documentation](https://fx.sh/docs/using-fx/acp).
 
 ## Extend fx
 

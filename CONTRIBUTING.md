@@ -4,6 +4,8 @@
 
 `fx` is a CLI-first coding agent written in Zig.
 
+Supported platforms are Linux and macOS on x86_64 and aarch64. Windows, WebAssembly, and browser hosts are out of scope.
+
 Contributions should preserve that direction:
 
 * CLI-first over terminal-IDE behavior
@@ -285,7 +287,7 @@ Add it to `src/ui/resize_tests.zig`. See the file header for what each Harness m
 
 ### tmux end-to-end test (real SIGWINCH, seconds per test)
 
-For bugs that only show up with a real terminal and a real signal (timing, input integration, terminal-emulator quirks), add a scenario to `tests/e2e/tui-resize.test.ts` using the helpers in `tmux-helpers.ts`:
+For bugs that only show up with a real terminal and a real signal (timing, input integration, terminal-emulator quirks), add a tmux scenario using the helpers in `tests/e2e/tmux-helpers.ts`. Prefer landing the regression in `src/ui/resize_tests.zig` first:
 
 ```typescript
 test("my scenario", async () => {
@@ -323,13 +325,13 @@ Check in the golden file and wire a regression test that re-runs `fx replay` in 
 
 ## Releases
 
-Releases are triggered automatically when the version in `src/main.zig` changes on `main`:
+Releases are triggered automatically when the version in `src/main.zig` has no GitHub Release yet on `main`:
 
 1. Edit `pub const version = "X.Y.Z";` in `src/main.zig`
 2. Merge to `main`
-3. The release workflow checks if `vX.Y.Z` tag exists; if not, it builds four platform binaries, creates the git tag, and publishes a GitHub Release with the binaries attached
+3. The release workflow checks for a GitHub Release named `vX.Y.Z`. If it is missing, it builds four platform binaries, creates the git tag when that tag does not already exist (inherited tags are not moved), and publishes a GitHub Release with the binaries attached
 
-The install script and `fx upgrade` fetch binaries from `releases.fx.sh`, backed by the public Vercel Blob CDN. No authentication or external CLI tools are required. The release workflow also publishes binaries to the CDN and updates `latest.txt` automatically.
+This fork distributes binaries from GitHub Releases. Homebrew stable installs those assets. Do not reuse an inherited tag such as `v0.0.4`; bump the version instead.
 
 After CI passes for a push to `main`, the dev release workflow publishes commit-addressed binaries and then updates `dev.json`. Dogfooders opt in with `fx upgrade --channel dev`; the choice is stored in their user settings and applies to manual upgrades, automatic upgrades, and the `ctrl+g` handoff. `fx upgrade --channel stable` returns to tagged releases. Dev publishing does not create tags or GitHub Releases.
 

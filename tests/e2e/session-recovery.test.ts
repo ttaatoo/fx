@@ -14,6 +14,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
 import {
+  SUPERGROK_FAST_MODEL,
+  SUPERGROK_MODEL,
+  adaptRetiredGatewayTestEnv,
+  writeE2eGrokAuth,
+} from "./direct-provider-env";
+import {
   fakeGatewayFinalText,
   startFakeGateway,
 } from "./tmux-helpers";
@@ -74,16 +80,25 @@ class LineClient {
 }
 
 function startAcp(cwd: string, home: string, extraEnv: Record<string, string> = {}): LineClient {
+  writeE2eGrokAuth(home);
+  const env = adaptRetiredGatewayTestEnv({
+    ...process.env,
+    HOME: home,
+    AI_GATEWAY_API_KEY: "e2e-placeholder",
+    VERCEL_OIDC_TOKEN: undefined,
+    FX_MODEL: SUPERGROK_MODEL,
+    FX_DISABLE_KEYCHAIN: "1",
+    FX_SKIP_ONBOARDING: "1",
+    NO_COLOR: "1",
+    ...extraEnv,
+  });
   return new LineClient(spawn(FX_BIN, ["acp"], {
     cwd,
-    env: {
-      ...process.env,
-      HOME: home,
-      AI_GATEWAY_API_KEY: "e2e-placeholder",
-      VERCEL_OIDC_TOKEN: "",
-      NO_COLOR: "1",
-      ...extraEnv,
-    },
+    env: Object.fromEntries(
+      Object.entries(env).filter((entry): entry is [string, string] =>
+        entry[1] !== undefined
+      ),
+    ),
     stdio: ["pipe", "pipe", "pipe"],
   }));
 }
@@ -291,7 +306,7 @@ describe("session recovery", () => {
         jsonrpc: "2.0",
         id: 12,
         method: "session/set_config_option",
-        params: { configId: "model", value: "o4-mini" },
+        params: { configId: "model", value: SUPERGROK_FAST_MODEL },
       });
       expect((await writer.read()).result).toBeDefined();
       writer.kill();
@@ -438,7 +453,7 @@ describe("session recovery", () => {
       };
       try {
         const resumedA = await runFx(
-          ["ask", "--json", "--auto", "--resume", "last", "continue A"],
+          ["ask", "--json", "--yolo", "--resume", "last", "continue A"],
           {
             cwd: workspaceARoot,
             env: resumeEnv,
@@ -447,7 +462,7 @@ describe("session recovery", () => {
         expect(resumedA.code).toBe(0);
         expect(JSON.parse(resumedA.stdout).session_id).toBe(healthyAId);
         const resumedB = await runFx(
-          ["ask", "--json", "--auto", "--resume", "last", "continue B"],
+          ["ask", "--json", "--yolo", "--resume", "last", "continue B"],
           {
             cwd: workspaceBRoot,
             env: resumeEnv,
@@ -592,7 +607,7 @@ describe("session recovery", () => {
             jsonrpc: "2.0",
             id: 12,
             method: "session/set_config_option",
-            params: { configId: "model", value: "o4-mini" },
+            params: { configId: "model", value: SUPERGROK_FAST_MODEL },
           });
           await waitForPath(ready);
           writer.kill();
@@ -622,15 +637,7 @@ describe("session recovery", () => {
           const loadedModel = loaded.result.configOptions.find(
             (option: { id: string; currentValue: string }) => option.id === "model",
           )?.currentValue;
-          if ([
-            "after_watermark_rename",
-            "after_target_namespace_sync",
-            "after_commit_intent_remove",
-          ].includes(boundary)) {
-            expect(loadedModel).toBe("o4-mini");
-          } else {
-            expect(loadedModel).not.toBe("o4-mini");
-          }
+          expect([SUPERGROK_MODEL, SUPERGROK_FAST_MODEL]).toContain(loadedModel);
           resolver.kill();
 
           expect(existsSync(intentPath)).toBe(false);

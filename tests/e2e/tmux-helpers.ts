@@ -13,12 +13,15 @@ import { join } from "node:path";
 import { FX_BIN, REPO_ROOT } from "../evals/eval-helpers";
 import {
   FAKE_DIRECT_MODEL,
+  SUPERGROK_MODEL,
   adaptRetiredGatewayTestEnv,
+  ensureTuiSupergrokHome,
 } from "./direct-provider-env";
 
 let sessionCounter = 0;
 
 export const FAKE_GATEWAY_MODEL = FAKE_DIRECT_MODEL;
+export { SUPERGROK_MODEL };
 const TMUX_CAPTURE_MAX_BUFFER = 32 * 1024 * 1024;
 const TMUX_HEX_CHUNK_BYTES = 256;
 const COMPOSER_LINE = /^[ \t]*(?:┃|❯|>)(?:[ \t]|$)/;
@@ -217,10 +220,262 @@ function anthropicSseFromLegacyEvents(events: object[]): string {
   return parts.join("");
 }
 
+function openaiSseFromLegacyEvents(events: object[]): string {
+  const parts: string[] = [];
+  let toolIndex = 0;
+  let pendingToolName: string | undefined;
+  let pendingToolId: string | undefined;
+  let pendingToolArgs = "";
+  for (const event of events) {
+    const item = event as {
+      type?: string;
+      id?: string;
+      delta?: string;
+      toolCallId?: string;
+      toolName?: string;
+      input?: unknown;
+      finishReason?: { unified?: string; raw?: string };
+      usage?: {
+        inputTokens?: { total?: number };
+        outputTokens?: { total?: number };
+      };
+    };
+    if (item.type === "text-delta") {
+      parts.push(sseData({
+        id: "chatcmpl_e2e",
+        object: "chat.completion.chunk",
+        choices: [{
+          index: 0,
+          delta: { content: item.delta ?? "" },
+          finish_reason: null,
+        }],
+      }));
+      continue;
+    }
+    if (item.type === "tool-input-start") {
+      pendingToolName = item.toolName;
+      pendingToolId = item.id;
+      pendingToolArgs = "";
+      continue;
+    }
+    if (item.type === "tool-input-delta") {
+      pendingToolArgs += item.delta ?? "";
+      continue;
+    }
+    if (item.type === "tool-input-end") {
+      continue;
+    }
+    if (item.type === "tool-call") {
+      const input = item.input !== undefined
+        ? (typeof item.input === "string" ? item.input : JSON.stringify(item.input ?? {}))
+        : (pendingToolArgs.length > 0 ? pendingToolArgs : "{}");
+      parts.push(sseData({
+        id: "chatcmpl_e2e",
+        object: "chat.completion.chunk",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: toolIndex,
+              id: item.toolCallId ?? pendingToolId ?? `tool_${toolIndex}`,
+              type: "function",
+              function: {
+                name: item.toolName ?? pendingToolName ?? "unknown",
+                arguments: input,
+              },
+            }],
+          },
+          finish_reason: null,
+        }],
+      }));
+      toolIndex += 1;
+      pendingToolName = undefined;
+      pendingToolId = undefined;
+      pendingToolArgs = "";
+      continue;
+    }
+    if (item.type === "finish") {
+      const raw = item.finishReason?.unified ?? item.finishReason?.raw ?? "stop";
+      const reason = raw === "tool-calls" || raw === "tool_use" ? "tool_calls" : "stop";
+      parts.push(sseData({
+        id: "chatcmpl_e2e",
+        object: "chat.completion.chunk",
+        choices: [{
+          index: 0,
+          delta: {},
+          finish_reason: reason,
+        }],
+        usage: {
+          prompt_tokens: item.usage?.inputTokens?.total ?? 3,
+          completion_tokens: item.usage?.outputTokens?.total ?? 5,
+        },
+      }));
+      continue;
+    }
+  }
+  parts.push("data: [DONE]\n\n");
+  return parts.join("");
+}
+
+export function openAiSseTextDelta(delta: string): string {
+  return sseData({
+    id: "chatcmpl_e2e",
+    object: "chat.completion.chunk",
+    choices: [{
+      index: 0,
+      delta: { content: delta },
+      finish_reason: null,
+    }],
+  });
+}
+
+export function openAiSseStop(): string {
+  return sseData({
+    id: "chatcmpl_e2e",
+    object: "chat.completion.chunk",
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    usage: { prompt_tokens: 3, completion_tokens: 5 },
+  }) + "data: [DONE]\n\n";
+}
+
+const fakeCompletionEvents = new WeakMap<Response, object[]>();
+
+type StreamingTextJob = {
+  lines: string[];
+  delayMs: number;
+  holdBefore?: Promise<void>;
+  holdAfter?: Promise<void>;
+};
+
+const fakeStreamingJobs = new WeakMap<Response, StreamingTextJob>();
+
+export function requestHasToolCallId(body: string, id: string): boolean {
+  return body.includes(`"toolCallId":"${id}"`) ||
+    body.includes(`"tool_call_id":"${id}"`) ||
+    body.includes(`"tool_use_id":"${id}"`);
+}
+
+function toolResultContentText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(toolResultContentText).join("");
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return [
+      toolResultContentText(object.text),
+      toolResultContentText(object.value),
+      toolResultContentText(object.content),
+      toolResultContentText(object.output),
+    ].join("");
+  }
+  return "";
+}
+
+export function toolResultOutputFromBody(body: string, callId: string): string {
+  const request = JSON.parse(body) as {
+    prompt?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
+    messages?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
+  };
+  const messages = request.prompt ?? request.messages ?? [];
+  const parts = messages.flatMap((message) =>
+    Array.isArray(message.content) ? message.content : []
+  ) as Array<Record<string, unknown>>;
+  const result = parts.find((part) =>
+    (part.type === "tool-result" && part.toolCallId === callId) ||
+    (part.type === "tool_result" && part.tool_use_id === callId)
+  );
+  if (result) {
+    const output = result.output as Record<string, unknown> | undefined;
+    if (typeof output?.value === "string") return output.value;
+    return toolResultContentText(result.content ?? result.output);
+  }
+  const toolMessage = messages.find((message) =>
+    message.role === "tool" && message.tool_call_id === callId
+  );
+  if (!toolMessage) throw new Error(`Missing tool result for ${callId}`);
+  return toolResultContentText(toolMessage.content);
+}
+
 export function fakeGatewaySse(events: object[]) {
-  return new Response(anthropicSseFromLegacyEvents(events), {
+  const response = new Response(anthropicSseFromLegacyEvents(events), {
     headers: { "content-type": "text/event-stream" },
   });
+  fakeCompletionEvents.set(response, events);
+  return response;
+}
+
+function streamingTextResponse(path: string, job: StreamingTextJob): Response {
+  const openai = path.includes("chat/completions");
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          if (job.holdBefore) await job.holdBefore;
+          if (openai) {
+            for (const line of job.lines) {
+              controller.enqueue(encoder.encode(openAiSseTextDelta(`${line}\n`)));
+              if (job.delayMs > 0) await sleep(job.delayMs);
+            }
+            if (job.holdAfter) await job.holdAfter;
+            controller.enqueue(encoder.encode(openAiSseStop()));
+          } else {
+            if (job.delayMs > 0) {
+              await sleep(job.delayMs * job.lines.length);
+            }
+            if (job.holdAfter) await job.holdAfter;
+            const events = [
+              ...job.lines.map((line) => ({
+                type: "text-delta",
+                id: "answer_1",
+                delta: `${line}\n`,
+              })),
+              {
+                type: "finish",
+                finishReason: { unified: "stop", raw: "stop" },
+              },
+            ];
+            controller.enqueue(encoder.encode(anthropicSseFromLegacyEvents(events)));
+          }
+        } finally {
+          controller.close();
+        }
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+}
+
+export function fakeGatewayStreamingText(
+  lines: string[],
+  delayMs = 0,
+  options: {
+    holdBefore?: Promise<void>;
+    holdAfter?: Promise<void>;
+  } = {},
+): Response {
+  const response = new Response("streaming-text", {
+    headers: { "content-type": "text/event-stream" },
+  });
+  fakeStreamingJobs.set(response, {
+    lines,
+    delayMs,
+    holdBefore: options.holdBefore,
+    holdAfter: options.holdAfter,
+  });
+  return response;
+}
+
+export function completionResponseForPath(path: string, response: Response): Response {
+  const streaming = fakeStreamingJobs.get(response);
+  if (streaming) return streamingTextResponse(path, streaming);
+  const events = fakeCompletionEvents.get(response);
+  if (!events) return response;
+  if (path.includes("chat/completions")) {
+    return new Response(openaiSseFromLegacyEvents(events), {
+      headers: { "content-type": "text/event-stream" },
+    });
+  }
+  return response;
 }
 
 export function fakeGatewayToolCall(
@@ -335,7 +590,7 @@ export function heldFakeGatewayFinalText() {
       return;
     }
     stopTimer();
-    controller.enqueue(encoder.encode(anthropicSseFromLegacyEvents([
+    const events = [
       { type: "text-delta", id: "answer_1", delta: text },
       {
         type: "finish",
@@ -345,7 +600,8 @@ export function heldFakeGatewayFinalText() {
           outputTokens: { total: 5 },
         },
       },
-    ])));
+    ];
+    controller.enqueue(encoder.encode(openaiSseFromLegacyEvents(events)));
     close();
   };
   const createResponse = () => new Response(
@@ -469,7 +725,8 @@ function serveFakeGateway(
         return fakeGatewayPermissionDecision(options.classifierDecision ?? "allow");
       }
       requests.push({ body, headers });
-      return nextCompletion(body);
+      const response = await nextCompletion(body);
+      return completionResponseForPath(new URL(req.url).pathname, response);
     },
   });
   return {
@@ -492,13 +749,19 @@ export function startFakeGateway(
   responses: FakeGatewayResponse[],
   options: FakeGatewayOptions = {},
 ) {
-  return serveFakeGateway(async (body) => {
+  const server = serveFakeGateway(async (body) => {
     const next = responses.shift();
     if (!next) {
       return new Response("unexpected request", { status: 500 });
     }
     return typeof next === "function" ? await next(body) : next;
   }, options);
+  return {
+    ...server,
+    remainingResponseCount() {
+      return responses.length;
+    },
+  };
 }
 
 // Same server and classifier handling as startFakeGateway, but every
@@ -551,6 +814,7 @@ export class TmuxSession {
       socketName,
     } = opts ?? {};
     const env = adaptRetiredGatewayTestEnv(rawEnv);
+    ensureTuiSupergrokHome(typeof env.HOME === "string" ? env.HOME : undefined, env);
 
     if (
       minimumHistoryLines !== undefined &&

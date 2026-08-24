@@ -11,17 +11,19 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
-import { contentText } from "./conditional-guidance-oracle";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import {
   fakeGatewayFinalText,
   fakeGatewayToolCall,
+  requestHasToolCallId,
   startDynamicFakeGateway,
   startFakeGateway,
+  toolResultOutputFromBody,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const MODEL = "openai/gpt-5";
+const MODEL = SUPERGROK_MODEL;
 const TOOL_NAME = "mcp_fixture_echo";
 const MODERN_RESULT = "MODERN_MCP_TOOL_RESULT";
 const LEGACY_RESULT = "LEGACY_MCP_TOOL_RESULT";
@@ -220,7 +222,7 @@ function fixtureEnv(root: FixtureRoot, activeGateway: ReturnType<typeof startFak
     AI_GATEWAY_API_KEY: "fake-mcp-stdio-key",
     VERCEL_OIDC_TOKEN: undefined,
     FX_AUTO_UPGRADE: "0",
-    FX_PERMISSION_MODE: "auto",
+    FX_PERMISSION_MODE: "yolo",
     FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
     FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: activeGateway.chatUrl,
@@ -374,7 +376,7 @@ describe("modern MCP stdio compatibility", () => {
     });
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Confirm the workspace is available."],
+        ["ask", "--json", "--yolo", "--no-save", "Confirm the workspace is available."],
         {
           cwd: workspace,
           env: {
@@ -411,7 +413,7 @@ describe("modern MCP stdio compatibility", () => {
     });
     gateway = initialGateway;
     const initial = await runFx(
-      ["ask", "--json", "--auto", "Use the fresh profile MCP."],
+      ["ask", "--json", "--yolo", "Use the fresh profile MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, initialGateway),
@@ -440,7 +442,7 @@ describe("modern MCP stdio compatibility", () => {
     });
     gateway = resumedGateway;
     const resumed = await runFx(
-      ["ask", "--json", "--auto", "--resume", sessionId, "Use the current profile MCP."],
+      ["ask", "--json", "--yolo", "--resume", sessionId, "Use the current profile MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, resumedGateway),
@@ -471,18 +473,18 @@ describe("modern MCP stdio compatibility", () => {
     });
     let childCompleted = false;
     const activeGateway = startDynamicFakeGateway(async (body) => {
-      if (body.includes('"toolCallId":"child_mcp_call"')) {
+      if (requestHasToolCallId(body, "child_mcp_call")) {
         childCompleted = true;
         releaseParent(fakeGatewayFinalText("SCOPED_MCP_ONE_OFF_PARENT_READY"));
         return fakeGatewayFinalText("SCOPED_MCP_ONE_OFF_CHILD_READY");
       }
-      if (body.includes('"toolCallId":"child_mcp_select"')) {
+      if (requestHasToolCallId(body, "child_mcp_select")) {
         return fakeGatewayToolCall("child_mcp_call", TOOL_NAME, { text: "child" });
       }
-      if (body.includes('"toolCallId":"child_completion"')) {
+      if (requestHasToolCallId(body, "child_completion")) {
         return fakeGatewayToolCall("child_mcp_select", "mcp_select_tool", { name: TOOL_NAME });
       }
-      if (body.includes('"toolCallId":"child_prompt_get"')) {
+      if (requestHasToolCallId(body, "child_prompt_get")) {
         return fakeGatewayToolCall("child_completion", "mcp_features", {
           action: "prompt_complete",
           server: "fixture",
@@ -491,7 +493,7 @@ describe("modern MCP stdio compatibility", () => {
           value: "b",
         });
       }
-      if (body.includes('"toolCallId":"child_prompt_list"')) {
+      if (requestHasToolCallId(body, "child_prompt_list")) {
         return fakeGatewayToolCall("child_prompt_get", "mcp_features", {
           action: "prompt_get",
           server: "fixture",
@@ -499,20 +501,20 @@ describe("modern MCP stdio compatibility", () => {
           arguments: { tone: "brief" },
         });
       }
-      if (body.includes('"toolCallId":"child_resource_read"')) {
+      if (requestHasToolCallId(body, "child_resource_read")) {
         return fakeGatewayToolCall("child_prompt_list", "mcp_features", {
           action: "prompt_list",
           server: "fixture",
         });
       }
-      if (body.includes('"toolCallId":"child_resource_list"')) {
+      if (requestHasToolCallId(body, "child_resource_list")) {
         return fakeGatewayToolCall("child_resource_read", "mcp_features", {
           action: "resource_read",
           server: "fixture",
           uri: "custom://alpha",
         });
       }
-      if (body.includes('"toolCallId":"create_scoped_child"')) {
+      if (requestHasToolCallId(body, "create_scoped_child")) {
         return parentCompletion;
       }
       if (body.includes(childPrompt)) {
@@ -540,7 +542,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", parentPrompt],
+      ["ask", "--json", "--yolo", parentPrompt],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -575,12 +577,12 @@ describe("modern MCP stdio compatibility", () => {
       });
       let childCompleted = false;
       const activeGateway = startDynamicFakeGateway((body) => {
-        if (body.includes('"toolCallId":"feature_only_list"')) {
+        if (requestHasToolCallId(body, "feature_only_list")) {
           childCompleted = body.includes("custom://alpha");
           releaseParent(fakeGatewayFinalText(`FEATURE_ONLY_${marker}_PARENT_READY`));
           return fakeGatewayFinalText(`FEATURE_ONLY_${marker}_CHILD_READY`);
         }
-        if (body.includes('"toolCallId":"create_feature_only_child"')) {
+        if (requestHasToolCallId(body, "create_feature_only_child")) {
           return parentCompletion;
         }
         if (body.includes(childPrompt)) {
@@ -609,7 +611,7 @@ describe("modern MCP stdio compatibility", () => {
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--yolo", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -660,26 +662,15 @@ describe("modern MCP stdio compatibility", () => {
       });
       let childFailedClosed = false;
       const activeGateway = startDynamicFakeGateway(async (body) => {
-        if (body.includes('"toolCallId":"disabled_child_feature"')) {
-          const request = JSON.parse(body) as {
-            prompt?: Array<{ content?: unknown }>;
-          };
-          const parts = (request.prompt ?? []).flatMap((message) =>
-            Array.isArray(message.content) ? message.content : []
-          ) as Array<Record<string, unknown>>;
-          const toolResult = parts.find((part) =>
-            part.type === "tool-result" &&
-            part.toolCallId === "disabled_child_feature"
-          );
-          expect(toolResult).toBeDefined();
-          expect(contentText(toolResult!.output)).toBe(
+        if (requestHasToolCallId(body, "disabled_child_feature")) {
+          expect(toolResultOutputFromBody(body, "disabled_child_feature")).toBe(
             "No MCP runtime is available.",
           );
           childFailedClosed = true;
           releaseParent(fakeGatewayFinalText(`DISABLED_MCP_${marker}_PARENT_READY`));
           return fakeGatewayFinalText(`DISABLED_MCP_${marker}_CHILD_READY`);
         }
-        if (body.includes('"toolCallId":"create_disabled_child"')) {
+        if (requestHasToolCallId(body, "create_disabled_child")) {
           return parentCompletion;
         }
         if (body.includes(childPrompt)) {
@@ -707,7 +698,7 @@ describe("modern MCP stdio compatibility", () => {
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--yolo", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -773,13 +764,13 @@ describe("modern MCP stdio compatibility", () => {
       let allowedBaseline = 0;
       let deniedBaseline: WireEntry[] = [];
       const activeGateway = startDynamicFakeGateway(async (body) => {
-        if (body.includes('"toolCallId":"scoped_refresh_search"')) {
+        if (requestHasToolCallId(body, "scoped_refresh_search")) {
           expect(body).toContain("mcp_allowed_echo");
           expect(body).not.toContain("mcp_denied_blocked");
           releaseParent(fakeGatewayFinalText("SCOPED_REFRESH_PARENT_READY"));
           return fakeGatewayFinalText("SCOPED_REFRESH_CHILD_READY");
         }
-        if (body.includes('"toolCallId":"create_scoped_refresh_child"')) {
+        if (requestHasToolCallId(body, "create_scoped_refresh_child")) {
           return parentCompletion;
         }
         if (body.includes(childPrompt)) {
@@ -816,7 +807,7 @@ describe("modern MCP stdio compatibility", () => {
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--yolo", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -887,7 +878,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Try the MCP features requiring input."],
+      ["ask", "--json", "--yolo", "--no-save", "Try the MCP features requiring input."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -968,10 +959,13 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the configured MCP resource and prompt features."],
+      ["ask", "--json", "--no-save", "Use the configured MCP resource and prompt features."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: {
+          ...fixtureEnv(root, gateway),
+          FX_PERMISSION_MODE: "auto",
+        },
         timeoutMs: 25_000,
       },
     );
@@ -1029,7 +1023,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Exercise MCP feature errors."],
+      ["ask", "--json", "--yolo", "--no-save", "Exercise MCP feature errors."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1071,7 +1065,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Read the stalled MCP resource."],
+      ["ask", "--json", "--yolo", "--no-save", "Read the stalled MCP resource."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1122,7 +1116,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the live stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the live stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1180,7 +1174,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the changed legacy stdio tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the changed legacy stdio tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1217,7 +1211,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = startToolGateway("Latest legacy stdio negotiation complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1250,7 +1244,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = startToolGateway("Invalid params fallback complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1289,7 +1283,7 @@ describe("modern MCP stdio compatibility", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the failing MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the failing MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1316,7 +1310,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = startToolGateway("Ordered legacy stdio negotiation complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1344,7 +1338,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = startToolGateway("Legacy stdio version ladder complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the oldest legacy stdio MCP tool."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the oldest legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1394,7 +1388,7 @@ describe("modern MCP stdio compatibility", () => {
 
       const started = Date.now();
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Exercise the malformed MCP fixture."],
+        ["ask", "--json", "--yolo", "--no-save", "Exercise the malformed MCP fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway),
@@ -1791,7 +1785,7 @@ describe("modern MCP stdio compatibility", () => {
       const activeGateway = startToolGateway(`${fixture.label} MCP complete.`);
       gateway = activeGateway;
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", `Call the ${fixture.label} MCP fixture.`],
+        ["ask", "--json", "--yolo", "--no-save", `Call the ${fixture.label} MCP fixture.`],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -1842,7 +1836,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Answer without using MCP."],
+      ["ask", "--json", "--yolo", "--no-save", "Answer without using MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1864,7 +1858,7 @@ describe("modern MCP stdio compatibility", () => {
     const activeGateway = startToolGateway("Legacy Draft 7 complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy Draft 7 MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the legacy Draft 7 MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1902,7 +1896,7 @@ describe("modern MCP stdio compatibility", () => {
     });
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Try invalid legacy Draft 7 arguments."],
+      ["ask", "--json", "--yolo", "--no-save", "Try invalid legacy Draft 7 arguments."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1926,7 +1920,7 @@ describe("modern MCP stdio compatibility", () => {
     const activeGateway = startToolGateway("Legacy progress complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the legacy MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1951,7 +1945,7 @@ describe("modern MCP stdio compatibility", () => {
     const activeGateway = startToolGateway("MRTR Ask boundary complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the MRTR MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the MRTR MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2233,7 +2227,7 @@ describe("modern MCP stdio compatibility", () => {
           isolated: true,
           ...(surface === "Ask"
             ? {
-                cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the unsafe MCP elicitation fixture.")}`,
+                cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the unsafe MCP elicitation fixture.")}`,
                 remainOnExit: true,
               }
             : { stderrPath }),
@@ -2310,7 +2304,7 @@ describe("modern MCP stdio compatibility", () => {
           isolated: true,
           ...(surface === "Ask"
             ? {
-                cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the colliding MCP form fixture.")}`,
+                cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the colliding MCP form fixture.")}`,
                 remainOnExit: true,
               }
             : { stderrPath }),
@@ -2568,7 +2562,7 @@ describe("modern MCP stdio compatibility", () => {
     const activeGateway = startToolGateway("Legacy URL-required version gate complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy URL-required fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the legacy URL-required fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2597,7 +2591,7 @@ describe("modern MCP stdio compatibility", () => {
       const prompt = "Call the MRTR MCP fixture interactively.";
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify(prompt)}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify(prompt)}`,
         cwd: root.workspace,
         width: 120,
         height: 34,
@@ -2651,7 +2645,7 @@ describe("modern MCP stdio compatibility", () => {
         const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the direct legacy elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the direct legacy elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -2723,7 +2717,7 @@ describe("modern MCP stdio compatibility", () => {
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the legacy URL-required fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the legacy URL-required fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -2785,7 +2779,7 @@ describe("modern MCP stdio compatibility", () => {
       const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the multiple legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the multiple legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 120,
         height: 36,
@@ -2854,7 +2848,7 @@ describe("modern MCP stdio compatibility", () => {
       const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the malformed completion fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the malformed completion fixture.")}`,
         cwd: root.workspace,
         width: 120,
         height: 36,
@@ -2910,7 +2904,7 @@ describe("modern MCP stdio compatibility", () => {
       writeFakeUrlOpeners(fakeBin, "#!/bin/sh\nexit 0\n");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call and cancel the legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call and cancel the legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 110,
         height: 34,
@@ -2952,7 +2946,7 @@ describe("modern MCP stdio compatibility", () => {
       writeFakeUrlOpeners(fakeBin, "#!/bin/sh\nexit 0\n");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call and wait for the legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call and wait for the legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 110,
         height: 34,
@@ -3027,7 +3021,7 @@ describe("modern MCP stdio compatibility", () => {
         const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify(`Use the legacy ${operation} URL-required fixture.`)}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify(`Use the legacy ${operation} URL-required fixture.`)}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -3077,7 +3071,7 @@ describe("modern MCP stdio compatibility", () => {
       const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Complete the full MCP form.")}`,
+        cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Complete the full MCP form.")}`,
         cwd: root.workspace,
         width: 120,
         height: 38,
@@ -3211,7 +3205,7 @@ describe("modern MCP stdio compatibility", () => {
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the URL elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Call the URL elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -3292,7 +3286,7 @@ describe("modern MCP stdio compatibility", () => {
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Decline the URL elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --yolo --no-save ${JSON.stringify("Decline the URL elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 34,
@@ -3335,7 +3329,7 @@ describe("modern MCP stdio compatibility", () => {
     const progressGateway = startToolGateway("Progress MCP complete.");
     gateway = progressGateway;
     const progressResult = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the progress MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the progress MCP fixture."],
       {
         cwd: progressRoot.workspace,
         env: fixtureEnv(progressRoot, progressGateway),
@@ -3365,7 +3359,7 @@ describe("modern MCP stdio compatibility", () => {
     const timeoutGateway = startToolGateway("Timed out MCP recovered.");
     gateway = timeoutGateway;
     const timeoutResult = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the stalled MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Call the stalled MCP fixture."],
       {
         cwd: timeoutRoot.workspace,
         env: fixtureEnv(timeoutRoot, timeoutGateway),
@@ -3401,7 +3395,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the stalled MCP fixture."],
+      ["ask", "--json", "--yolo", "--no-save", "Use the stalled MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -3488,7 +3482,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "This request must remain blocked."],
+      ["ask", "--json", "--yolo", "--no-save", "This request must remain blocked."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -3683,19 +3677,19 @@ describe("modern MCP stdio compatibility", () => {
       const beforePrompt = "BEFORE_FAILED_RELOAD";
       const afterPrompt = "AFTER_FAILED_RELOAD";
       const activeGateway = startDynamicFakeGateway((body) => {
-        if (body.includes('"toolCallId":"after_call"')) {
+        if (requestHasToolCallId(body, "after_call")) {
           return fakeGatewayFinalText("AFTER_RELOAD_READY");
         }
-        if (body.includes('"toolCallId":"after_select"')) {
+        if (requestHasToolCallId(body, "after_select")) {
           return fakeGatewayToolCall("after_call", TOOL_NAME, { text: "after" });
         }
         if (body.includes(afterPrompt)) {
           return fakeGatewayToolCall("after_select", "mcp_select_tool", { name: TOOL_NAME });
         }
-        if (body.includes('"toolCallId":"before_call"')) {
+        if (requestHasToolCallId(body, "before_call")) {
           return fakeGatewayFinalText("BEFORE_RELOAD_READY");
         }
-        if (body.includes('"toolCallId":"before_select"')) {
+        if (requestHasToolCallId(body, "before_select")) {
           return fakeGatewayToolCall("before_call", TOOL_NAME, { text: "before" });
         }
         if (body.includes(beforePrompt)) {
@@ -3845,16 +3839,16 @@ describe("modern MCP stdio compatibility", () => {
       const beforePrompt = "SELECT_BEFORE_MCP_RELOAD";
       const afterPrompt = "CALL_DIRECTLY_AFTER_MCP_RELOAD";
       const activeGateway = startDynamicFakeGateway((body) => {
-        if (body.includes('"toolCallId":"reload_direct"')) {
+        if (requestHasToolCallId(body, "reload_direct")) {
           return fakeGatewayFinalText("POST_RELOAD_GUIDANCE_READY");
         }
         if (body.includes(afterPrompt)) {
           return fakeGatewayToolCall("reload_direct", TOOL_NAME, { text: "stale" });
         }
-        if (body.includes('"toolCallId":"reload_before_call"')) {
+        if (requestHasToolCallId(body, "reload_before_call")) {
           return fakeGatewayFinalText("PRE_RELOAD_CALL_READY");
         }
-        if (body.includes('"toolCallId":"reload_before_select"')) {
+        if (requestHasToolCallId(body, "reload_before_select")) {
           return fakeGatewayToolCall("reload_before_call", TOOL_NAME, { text: "before" });
         }
         if (body.includes(beforePrompt)) {
@@ -3884,7 +3878,7 @@ describe("modern MCP stdio compatibility", () => {
       await tui.waitForText("POST_RELOAD_GUIDANCE_READY", 15_000);
 
       const postReloadResult = activeGateway.requests.find((request) =>
-        request.body.includes('"toolCallId":"reload_direct"')
+        requestHasToolCallId(request.body, "reload_direct")
       );
       expect(postReloadResult?.body).toContain(
         "Dynamic MCP tool not selected for this model step",
@@ -4201,10 +4195,10 @@ describe("modern MCP stdio compatibility", () => {
       const afterReloadPrompt = "AFTER_RELOAD_ROOT_PROMPT";
       const replacementTool = "mcp_fixture_sum";
       const activeGateway = startDynamicFakeGateway((body) => {
-        if (body.includes('"toolCallId":"reload_root_call"')) {
+        if (requestHasToolCallId(body, "reload_root_call")) {
           return fakeGatewayFinalText("AFTER_RELOAD_ROOT_READY");
         }
-        if (body.includes('"toolCallId":"reload_root_select"')) {
+        if (requestHasToolCallId(body, "reload_root_select")) {
           return fakeGatewayToolCall("reload_root_call", replacementTool, { text: "replacement" });
         }
         if (body.includes(afterReloadPrompt)) {
@@ -4212,13 +4206,13 @@ describe("modern MCP stdio compatibility", () => {
             name: replacementTool,
           });
         }
-        if (body.includes('"toolCallId":"reload_child_call"')) {
+        if (requestHasToolCallId(body, "reload_child_call")) {
           return fakeGatewayFinalText("RELOAD_CHILD_CANCELLED");
         }
-        if (body.includes('"toolCallId":"reload_child_select"')) {
+        if (requestHasToolCallId(body, "reload_child_select")) {
           return fakeGatewayToolCall("reload_child_call", TOOL_NAME, { text: "stall" });
         }
-        if (body.includes('"toolCallId":"reload_child_create"')) {
+        if (requestHasToolCallId(body, "reload_child_create")) {
           return fakeGatewayFinalText("RELOAD_PARENT_READY");
         }
         if (body.includes(childPrompt)) {
@@ -4302,14 +4296,14 @@ describe("modern MCP stdio compatibility", () => {
       const childWakeDeadline = Date.now() + 10_000;
       while (
         !activeGateway.requests.some((request) =>
-          request.body.includes('"toolCallId":"reload_child_call"')
+          requestHasToolCallId(request.body, "reload_child_call")
         ) &&
         Date.now() < childWakeDeadline
       ) {
         await Bun.sleep(25);
       }
       expect(activeGateway.requests.some((request) =>
-        request.body.includes('"toolCallId":"reload_child_call"')
+        requestHasToolCallId(request.body, "reload_child_call")
       )).toBe(true);
 
       const wire = readWire(root.wireLogPath);
@@ -4360,7 +4354,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Recover the MCP fixture once."],
+      ["ask", "--json", "--yolo", "--no-save", "Recover the MCP fixture once."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -4479,7 +4473,7 @@ describe("modern MCP stdio compatibility", () => {
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Exhaust the MCP restart budget."],
+      ["ask", "--json", "--yolo", "--no-save", "Exhaust the MCP restart budget."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),

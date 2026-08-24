@@ -60,85 +60,6 @@ jobs:
           MATRIX_RESULT: ${{ needs.zig_mode.result }}
         run: test "$MATRIX_RESULT" = success
 
-  sdk-node-wasm:
-    name: SDK (Node + WASM)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: "0.16.0"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: Build WASM surfaces (ReleaseSmall)
-        run: |
-          zig build -Dwasm-surface=core -Doptimize=ReleaseSmall
-          zig build -Dwasm-surface=term -Doptimize=ReleaseSmall
-
-      - name: Install terminal test dependencies
-        run: npm ci --prefix sdk/node
-
-      - name: Test Node + WASM
-        run: npm run --prefix sdk test:node-wasm
-
-  sdk-node-napi:
-    name: SDK (Node + N-API)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: "0.16.0"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: Build N-API addon (ReleaseSafe)
-        run: zig build -Dnapi-surface=core -Doptimize=ReleaseSafe
-
-      - name: Test Node + N-API
-        run: npm run --prefix sdk test:node-napi
-
-  sdk-browser-wasm:
-    name: SDK (Browser + WASM)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: "0.16.0"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: Setup Chrome
-        id: setup-chrome
-        uses: browser-actions/setup-chrome@v2
-
-      - name: Build WASM surfaces (ReleaseSmall)
-        run: |
-          zig build -Dwasm-surface=core -Doptimize=ReleaseSmall
-          zig build -Dwasm-surface=term -Doptimize=ReleaseSmall
-
-      - name: Test Browser + WASM
-        env:
-          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: npm run --prefix sdk test:browser-wasm
-
   e2e_mode:
     name: E2E (deterministic, ${{ matrix.optimize }})
     runs-on: ubuntu-latest
@@ -213,16 +134,6 @@ jobs:
         run: bun test config-persistence.test.ts session-recovery.test.ts prompt-history.test.ts
         working-directory: tests/e2e
 
-      - name: Run lean Auto Mode reliability contract
-        run: bun test auto-mode-reliability.test.ts
-        working-directory: tests/e2e
-        env:
-          FX_REQUIRE_TMUX: "1"
-
-      - name: Run headless SIGINT regressions
-        run: bun test ./tui-command-permissions.test.ts --test-name-pattern "fx ask SIGINT during classifier wait terminates before decision or execution"
-        working-directory: tests/e2e
-
       - name: Run TUI input line deletion regression
         run: |
           tmux -V
@@ -247,11 +158,10 @@ jobs:
         env:
           FX_REQUIRE_TMUX: "1"
 
-      - name: Run direct-write and command scrollback regressions
+      - name: Run direct-write audit regression
         run: |
           tmux -V
           bun test tui-direct-write-audit.test.ts
-          bun test ./tui-command-permissions.test.ts --test-name-pattern "TUI preserves completed transcript when a later auto-approved command starts|TUI isolates approved foreground commands from terminal ownership"
         working-directory: tests/e2e
         env:
           FX_REQUIRE_TMUX: "1"

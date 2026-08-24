@@ -14,8 +14,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { SUPERGROK_MODEL } from "./direct-provider-env";
 import {
-  FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText as finalText,
   fakeGatewaySse,
   fakeGatewayToolCall as toolCall,
@@ -101,7 +101,7 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    FX_MODEL: SUPERGROK_MODEL,
     FX_PERMISSION_MODE: "ask",
     FX_AUTO_UPGRADE: "0",
     NO_COLOR: "1",
@@ -408,11 +408,6 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       const gateway = startFakeGateway([
         fakeGatewaySse([
           {
-            type: "text-delta",
-            id: "answer_1",
-            delta: `x${marker} ${"x".repeat(2_048)}`,
-          },
-          {
             type: "tool-call",
             toolCallId: "pacer_gate_write",
             toolName: "write_file",
@@ -420,6 +415,11 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
               path: "pacer-gate.txt",
               content: "must not be written\n",
             },
+          },
+          {
+            type: "text-delta",
+            id: "answer_1",
+            delta: `x${marker} ${"x".repeat(2_048)}`,
           },
           {
             type: "finish",
@@ -835,7 +835,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       const resumed = await runFx(
         [
           "ask",
-          "--auto",
+          "--yolo",
           "--resume-id",
           sessionId,
           "Continue the amended review session.",
@@ -846,7 +846,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         },
       );
       expect(resumed.code).toBe(0);
-      expect(resumed.stderr).toBe("");
+      expect(resumed.stderr.startsWith("YOLO enabled: permissions and sandboxing disabled")).toBe(true);
       expect(resumedGateway.requests).toHaveLength(1);
       const resumedRequest = resumedGateway.requests[0]!.body;
       expect(resumedRequest.indexOf('"role":"tool"')).toBeGreaterThanOrEqual(0);

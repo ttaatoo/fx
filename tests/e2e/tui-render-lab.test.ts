@@ -708,10 +708,7 @@ describe.skipIf(SKIP)("tui: render lab", () => {
         }
       }
       expect(readQuiescence(artifacts.manifest)).toHaveLength(1);
-      expect(artifacts.gatewayRequests).toEqual([
-        "GET /coding-agent/v1/models",
-        "POST /v3/ai/language-model",
-      ]);
+      expect(artifacts.gatewayRequests.some((request) => request.includes("/coding-agent/v1/models"))).toBe(false);
       expect(artifacts.stderr).toBe("");
     },
     TIMEOUT,
@@ -730,7 +727,7 @@ describe.skipIf(SKIP)("tui: render lab", () => {
       expect(artifacts.finalFrame.grid.some((row) => /^❯\s*$/.test(row))).toBe(true);
       expect(artifacts.finalFrame.grid.some((row) => row.includes("HTTP 401"))).toBe(false);
       expect(artifacts.finalFrame.grid.some((row) => row.includes("RENDER_LAB_LOCAL_GATEWAY_OK"))).toBe(false);
-      expect(artifacts.gatewayRequests).toEqual(["GET /coding-agent/v1/models", "POST /v3/ai/language-model"]);
+      expect(artifacts.gatewayRequests.some((request) => request.includes("/coding-agent/v1/models"))).toBe(false);
       expect(artifacts.stderr).toBe("");
     },
     TIMEOUT,
@@ -750,7 +747,7 @@ describe.skipIf(SKIP)("tui: render lab", () => {
       expect(artifacts.finalFrame.grid.some((row) => /^❯\s*$/.test(row))).toBe(true);
       expect(artifacts.finalFrame.grid.some((row) => row.includes("HTTP 401"))).toBe(false);
       expect(artifacts.finalFrame.grid.some((row) => row.includes("RENDER_LAB_LOCAL_GATEWAY_OK"))).toBe(false);
-      expect(artifacts.gatewayRequests).toEqual(["GET /coding-agent/v1/models", "POST /v3/ai/language-model"]);
+      expect(artifacts.gatewayRequests.some((request) => request.includes("/coding-agent/v1/models"))).toBe(false);
       expect(artifacts.stderr).toBe("");
     },
     TIMEOUT,

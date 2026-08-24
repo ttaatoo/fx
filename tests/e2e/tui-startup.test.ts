@@ -10,10 +10,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY } from "../evals/eval-helpers";
+import { FX_BIN } from "../evals/eval-helpers";
+import { writeE2eGrokAuth } from "./direct-provider-env";
 import { hasEmptyComposer, TmuxSession, tmuxAvailable } from "./tmux-helpers";
 
-const SKIP = !tmuxAvailable() || !HAS_API_KEY;
+const SKIP = !tmuxAvailable();
 const SKIP_TMUX = !tmuxAvailable();
 const TIMEOUT = 30_000;
 
@@ -172,6 +173,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
       const headPath = join(repository, ".git", "HEAD");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(join(home, ".fx"), { recursive: true });
+      writeE2eGrokAuth(home);
       mkdirSync(join(repository, ".git"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       writeFileSync(headPath, "ref: refs/heads/initial-branch\n");

@@ -35,5 +35,6 @@ The runner exits nonzero when a new check fails or a listed check starts
 passing, so any conformance change requires an intentional baseline update.
 
 `client.ts` uses the runner's scenario/context variables only to select the
-fake Gateway tool calls needed by each check, then launches
-`./zig-out/bin/fx`. It does not implement MCP messages or transport behavior.
+SuperGrok OpenAI loopback tool calls needed by each check, then launches
+`./zig-out/bin/fx` with dummy `grok-auth.json` and `--yolo`. It does not
+implement MCP messages or transport behavior.

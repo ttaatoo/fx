@@ -14,6 +14,8 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { FX_BIN, REPO_ROOT } from "../../evals/eval-helpers";
+import { SUPERGROK_MODEL, writeE2eGrokAuth } from "../direct-provider-env";
+import { completionResponseForPath, fakeGatewaySse } from "../tmux-helpers";
 import {
   ACTIVE_TOOL_MARKER,
   analyzeRun,
@@ -89,15 +91,8 @@ type LocalGatewayFixture = {
   stop(): void;
 };
 
-function gatewaySse(events: object[]): Response {
-  return new Response(
-    `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
-    { headers: { "content-type": "text/event-stream" } },
-  );
-}
-
-function permissionDecisionResponse(): Response {
-  return gatewaySse([
+function permissionDecisionResponse(pathname = LOCAL_GATEWAY_CHAT_PATH): Response {
+  return chatSse(pathname, [
     {
       type: "tool-call",
       toolCallId: "render_lab_permission_decision_1",
@@ -130,8 +125,16 @@ const OBSERVABILITY_FINAL_MARKER = "OBSERVABILITY_FINAL_RESPONSE";
 const OBSERVABILITY_PERMISSION_PROMPT = "Would you like to run the following command?";
 const OBSERVABILITY_PERMISSION_REVIEW = "Permission needed";
 const OBSERVABILITY_TOOL_COMMAND = "touch render-lab-observability-approved.txt";
-const LOCAL_GATEWAY_CHAT_PATH = "/v3/ai/language-model";
+const LOCAL_GATEWAY_CHAT_PATH = "/v1/chat/completions";
 const LOCAL_GATEWAY_MODELS_PATH = "/coding-agent/v1/models";
+
+function isChatPath(pathname: string): boolean {
+  return pathname === LOCAL_GATEWAY_CHAT_PATH || pathname === "/v3/ai/language-model";
+}
+
+function chatSse(pathname: string, events: object[]): Response {
+  return completionResponseForPath(pathname, fakeGatewaySse(events));
+}
 const DEFAULT_BENCH_SIZES: RenderLabTerminalSize[] = [
   { cols: 80, rows: 24 },
   { cols: 120, rows: 40 },
@@ -450,14 +453,8 @@ async function runActiveToolPlacement(
       gatewayApiKey: "render-lab-local-gateway-key",
       gatewayChatUrl: gateway.chatUrl,
       gatewayModelsUrl: gateway.modelsUrl,
+      permissionMode: "yolo",
     });
-    await submitSlashCommand(
-      context,
-      session,
-      "/permissions auto",
-      "auto",
-      "active-tool-permissions-auto",
-    );
 
     await session.sendText("exercise one active command placement");
     await waitForLocalGatewayRequest(
@@ -1638,6 +1635,10 @@ async function launchFx(
   const environment = [
     options.gatewayApiKey ? `AI_GATEWAY_API_KEY=${shQuote(options.gatewayApiKey)}` : null,
     options.gatewayChatUrl ? `FX_E2E_GATEWAY_CHAT_URL=${shQuote(options.gatewayChatUrl)}` : null,
+    options.gatewayChatUrl
+      ? `GROK_CLI_CHAT_PROXY_BASE_URL=${shQuote(`${new URL(options.gatewayChatUrl).origin}/v1`)}`
+      : null,
+    options.gatewayChatUrl ? `FX_MODEL=${shQuote(SUPERGROK_MODEL)}` : null,
     options.gatewayModelsUrl ? `FX_E2E_GATEWAY_MODELS_URL=${shQuote(options.gatewayModelsUrl)}` : null,
     options.permissionMode ? `FX_PERMISSION_MODE=${shQuote(options.permissionMode)}` : null,
   ].filter((entry): entry is string => entry !== null).join(" ");
@@ -1679,32 +1680,23 @@ function startLocalGatewayFixture(expectedPromptTail: string): LocalGatewayFixtu
         });
       }
 
-      if (request.method === "POST" && url.pathname === LOCAL_GATEWAY_CHAT_PATH) {
+      if (request.method === "POST" && isChatPath(url.pathname)) {
         const body = await request.text();
         if (!body.includes(expectedPromptTail)) {
           return new Response("prompt tail missing", { status: 422 });
         }
         await responseGate;
-        const sse = [
-          `data: ${JSON.stringify({ type: "text-delta", id: "render-lab", delta: LOCAL_GATEWAY_COMPLETION })}`,
-          "",
-          `data: ${JSON.stringify({
+        return chatSse(url.pathname, [
+          { type: "text-delta", id: "render-lab", delta: LOCAL_GATEWAY_COMPLETION },
+          {
             type: "finish",
             finishReason: { unified: "stop", raw: "stop" },
             usage: {
               inputTokens: { total: 1 },
               outputTokens: { total: 1 },
             },
-          })}`,
-          "",
-          "data: [DONE]",
-          "",
-        ].join("\n");
-        return new Response(sse, {
-          headers: {
-            "content-type": "text/event-stream",
           },
-        });
+        ]);
       }
 
       return new Response("not found", { status: 404 });
@@ -1743,34 +1735,44 @@ function startActiveToolGatewayFixture(): LocalGatewayFixture {
         requests.push(`${request.method} ${url.pathname}`);
         return Response.json({ data: [{ id: "anthropic/claude-opus-4.7", type: "language", released: 1, tags: ["tool-use"] }] });
       }
-      if (request.method === "POST" && url.pathname === LOCAL_GATEWAY_CHAT_PATH) {
+      if (request.method === "POST" && isChatPath(url.pathname)) {
         const body = await request.text();
         if (body.includes("\"permission_decision\"")) {
-          return permissionDecisionResponse();
+          return permissionDecisionResponse(url.pathname);
         }
         requests.push(`${request.method} ${url.pathname}`);
         chatRequestCount += 1;
         if (chatRequestCount === 2) await responseGate;
-        const sse = chatRequestCount === 1
-          ? [
-              `data: ${JSON.stringify({ type: "tool-input-start", id: "active_tool_1", toolName: "terminal" })}`,
-              "",
-              `data: ${JSON.stringify({ type: "tool-call", toolCallId: "active_tool_1", toolName: "terminal", input: { action: "exec", command: "sleep 1; i=1; while [ \"$i\" -le 32 ]; do printf 'ACTIVE_TOOL_LINE_%02d\\n' \"$i\"; i=$((i+1)); sleep 0.03; done; while [ ! -f .active-tool-release ]; do sleep 0.05; done" } })}`,
-              "",
-              `data: ${JSON.stringify({ type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" }, usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } })}`,
-              "",
-              "data: [DONE]",
-              "",
-            ].join("\n")
-          : [
-              `data: ${JSON.stringify({ type: "text-delta", id: "render-lab", delta: LOCAL_GATEWAY_COMPLETION })}`,
-              "",
-              `data: ${JSON.stringify({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } })}`,
-              "",
-              "data: [DONE]",
-              "",
-            ].join("\n");
-        return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+        return chatSse(
+          url.pathname,
+          chatRequestCount === 1
+            ? [
+                { type: "tool-input-start", id: "active_tool_1", toolName: "terminal" },
+                {
+                  type: "tool-call",
+                  toolCallId: "active_tool_1",
+                  toolName: "terminal",
+                  input: {
+                    action: "exec",
+                    command:
+                      "sleep 1; i=1; while [ \"$i\" -le 32 ]; do printf 'ACTIVE_TOOL_LINE_%02d\\n' \"$i\"; i=$((i+1)); sleep 0.03; done; while [ ! -f .active-tool-release ]; do sleep 0.05; done",
+                  },
+                },
+                {
+                  type: "finish",
+                  finishReason: { unified: "tool-calls", raw: "tool-calls" },
+                  usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
+                },
+              ]
+            : [
+                { type: "text-delta", id: "render-lab", delta: LOCAL_GATEWAY_COMPLETION },
+                {
+                  type: "finish",
+                  finishReason: { unified: "stop", raw: "stop" },
+                  usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
+                },
+              ],
+        );
       }
       return new Response("not found", { status: 404 });
     },
@@ -1829,7 +1831,7 @@ function startObservabilityGatewayFixture(
           ],
         });
       }
-      if (request.method === "POST" && url.pathname === LOCAL_GATEWAY_CHAT_PATH) {
+      if (request.method === "POST" && isChatPath(url.pathname)) {
         const body = await request.text();
         requests.push(`${request.method} ${url.pathname}`);
         chatRequestCount += 1;
@@ -1879,7 +1881,7 @@ function startObservabilityGatewayFixture(
                 },
               },
             ];
-        return gatewaySse(events);
+        return chatSse(url.pathname, events);
       }
       return new Response("not found", { status: 404 });
     },
@@ -1901,10 +1903,9 @@ function startObservabilityGatewayFixture(
 }
 
 function assertLocalGatewayRequests(requests: string[]): void {
-  for (const expected of [`GET ${LOCAL_GATEWAY_MODELS_PATH}`, `POST ${LOCAL_GATEWAY_CHAT_PATH}`]) {
-    if (!requests.includes(expected)) {
-      throw new Error(`local gateway request missing: ${expected}\n${requests.join("\n")}`);
-    }
+  const expected = `POST ${LOCAL_GATEWAY_CHAT_PATH}`;
+  if (!requests.includes(expected) && !requests.includes("POST /v3/ai/language-model")) {
+    throw new Error(`local chat request missing: ${expected}\n${requests.join("\n")}`);
   }
 }
 
@@ -2336,6 +2337,7 @@ function createFixture(runId: string): Fixture {
   mkdirSync(join(fixture.home, ".fx"), { recursive: true });
   mkdirSync(fixture.zdotdir, { recursive: true });
   mkdirSync(fixture.work, { recursive: true });
+  writeE2eGrokAuth(fixture.home);
   writeFileSync(
     join(fixture.home, ".fx", "settings.json"),
     `${JSON.stringify({ maxxing_mode: "legacy" })}\n`,
